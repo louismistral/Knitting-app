@@ -1,8 +1,11 @@
-// Domain model for the knitting app.
+// Domain model for the knitting app (mirrors the Supabase schema).
 
-/** A reference to a file (image / pdf) stored as a blob in IndexedDB. */
+export type Bucket = 'patterns' | 'photos'
+
+/** A reference to a file stored in Supabase Storage. */
 export interface FileRef {
-  id: string
+  bucket: Bucket
+  path: string
   name: string
   type: string // MIME type
 }

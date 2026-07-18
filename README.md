@@ -1,9 +1,9 @@
 # Maille — App de tricot 🧶
 
 Application mobile-first pour gérer ton tricot : patrons, stock de laine et projets.
-Tout fonctionne **en local dans le navigateur** — aucun compte, aucun serveur. Les
-métadonnées sont dans `localStorage` et les fichiers (patrons PDF/PNG, photos) dans
-IndexedDB.
+Les données sont **synchronisées via Supabase** (compte email + mot de passe), donc
+accessibles depuis tous tes appareils. Les fichiers (patrons PDF/PNG, photos) sont
+stockés dans Supabase Storage.
 
 ## Démarrer
 
@@ -13,6 +13,25 @@ npm run dev      # serveur de dev sur http://localhost:5173
 npm run build    # build de production dans dist/
 npm run preview  # prévisualiser le build
 ```
+
+La config Supabase est dans `.env` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`).
+La clé `sb_publishable_...` est publique par conception : l'accès aux données est
+protégé par les règles RLS de Postgres (chaque utilisateur ne voit que ses lignes).
+
+## Déploiement (GitHub Pages)
+
+Le workflow `.github/workflows/deploy.yml` compile l'app et la publie à chaque push.
+Dans **Settings → Pages**, mets la source sur **GitHub Actions**. L'app sera servie à
+`https://<user>.github.io/<repo>/` (routage par hash, chemins d'assets relatifs).
+
+Pour que l'inscription fonctionne sans lien de confirmation par email, désactive
+**Confirm email** dans **Supabase → Authentication → Sign In / Providers → Email**.
+
+## Base de données
+
+Tables (Postgres, RLS activé) : `patterns`, `yarns`, `projects`, `project_yarns`
+(associations laine↔projet), `project_photos`. La réconciliation du stock se fait
+côté serveur via les fonctions `set_allocation` / `remove_allocation` (atomiques).
 
 ## Les 5 zones
 

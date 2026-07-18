@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { useStore, saveFile, gramsToMeters } from '../store'
-import { Thumb, PatternPreview, useObjectUrl } from '../components/FileView'
+import { useStore, gramsToMeters } from '../store'
+import { uploadFile } from '../files'
+import type { FileRef } from '../types'
+import { Thumb, PatternPreview, useFileUrl } from '../components/FileView'
 import { Modal } from '../components/Modal'
 
 export function ProjectDetail() {
@@ -16,6 +18,8 @@ export function ProjectDetail() {
   const del = useStore((s) => s.deleteProject)
   const setAllocation = useStore((s) => s.setAllocation)
   const removeAllocation = useStore((s) => s.removeAllocation)
+  const addProjectPhotos = useStore((s) => s.addProjectPhotos)
+  const removeProjectPhoto = useStore((s) => s.removeProjectPhoto)
 
   const [pickYarn, setPickYarn] = useState(false)
   const [pickPattern, setPickPattern] = useState(false)
@@ -35,9 +39,10 @@ export function ProjectDetail() {
 
   async function onAddPhotos(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
-    const refs = await Promise.all(files.map(saveFile))
-    update(project!.id, { photos: [...project!.photos, ...refs] })
     e.target.value = ''
+    if (files.length === 0) return
+    const refs = await Promise.all(files.map((f) => uploadFile('photos', f)))
+    await addProjectPhotos(project!.id, refs)
   }
 
   return (
@@ -203,12 +208,9 @@ export function ProjectDetail() {
         </button>
         {project.photos.map((ph) => (
           <ProjectPhoto
-            key={ph.id}
-            fileId={ph.id}
+            key={ph.path}
             file={ph}
-            onRemove={() =>
-              update(project.id, { photos: project.photos.filter((x) => x.id !== ph.id) })
-            }
+            onRemove={() => removeProjectPhoto(project.id, ph)}
           />
         ))}
       </div>
@@ -300,15 +302,8 @@ export function ProjectDetail() {
   )
 }
 
-function ProjectPhoto({
-  file,
-  onRemove,
-}: {
-  fileId: string
-  file: { id: string; name: string; type: string }
-  onRemove: () => void
-}) {
-  const url = useObjectUrl(file)
+function ProjectPhoto({ file, onRemove }: { file: FileRef; onRemove: () => void }) {
+  const url = useFileUrl(file)
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
       {url ? (

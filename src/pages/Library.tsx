@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useStore, saveFile } from '../store'
+import { useStore } from '../store'
+import { uploadFile } from '../files'
 import type { FileRef } from '../types'
 import { Thumb } from '../components/FileView'
 import { Modal } from '../components/Modal'
@@ -70,8 +71,8 @@ export function Library() {
       {adding && (
         <AddPatternModal
           onClose={() => setAdding(false)}
-          onSave={(data) => {
-            addPattern(data)
+          onSave={async (data) => {
+            await addPattern(data)
             setAdding(false)
           }}
         />
@@ -105,8 +106,11 @@ function AddPatternModal({
     const f = e.target.files?.[0]
     if (!f) return
     setBusy(true)
-    setFile(await saveFile(f))
-    setBusy(false)
+    try {
+      setFile(await uploadFile('patterns', f))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (

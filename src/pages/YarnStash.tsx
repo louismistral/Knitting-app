@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { useStore, saveFile, skeinsInStash } from '../store'
+import { useStore, skeinsInStash } from '../store'
+import { uploadFile } from '../files'
 import type { FileRef, Yarn } from '../types'
 import { Thumb } from '../components/FileView'
 import { Modal } from '../components/Modal'
@@ -173,7 +174,7 @@ function YarnModal({
     const file = e.target.files?.[0]
     if (!file) return
     setF((p) => ({ ...p, photo: null }))
-    const ref = await saveFile(file)
+    const ref = await uploadFile('photos', file)
     setF((p) => ({ ...p, photo: ref }))
   }
 

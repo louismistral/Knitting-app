@@ -1,28 +1,23 @@
 import { useEffect, useState } from 'react'
 import type { FileRef } from '../types'
-import { getFile } from '../db'
+import { signedUrl } from '../files'
 
-/** Loads a stored blob and yields a temporary object URL, revoked on cleanup. */
-export function useObjectUrl(ref: FileRef | null | undefined): string | null {
+/** Resolves a stored file to a temporary signed URL. */
+export function useFileUrl(ref: FileRef | null | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
-    let revoked: string | null = null
     let active = true
     if (!ref) {
       setUrl(null)
       return
     }
-    getFile(ref.id).then((blob) => {
-      if (!active || !blob) return
-      const u = URL.createObjectURL(blob)
-      revoked = u
-      setUrl(u)
+    signedUrl(ref).then((u) => {
+      if (active) setUrl(u)
     })
     return () => {
       active = false
-      if (revoked) URL.revokeObjectURL(revoked)
     }
-  }, [ref?.id])
+  }, [ref?.bucket, ref?.path])
   return url
 }
 
@@ -35,7 +30,7 @@ interface ThumbProps {
 /** Square thumbnail for an image; shows an icon for PDFs / empty. */
 export function Thumb({ file, fallback = '🧶', className = 'thumb' }: ThumbProps) {
   const isImage = file?.type?.startsWith('image/')
-  const url = useObjectUrl(isImage ? file : null)
+  const url = useFileUrl(isImage ? file : null)
   if (isImage && url) {
     return <img className={className} src={url} alt={file?.name ?? ''} />
   }
@@ -45,7 +40,7 @@ export function Thumb({ file, fallback = '🧶', className = 'thumb' }: ThumbPro
 
 /** Full pattern preview: inline image or embedded PDF. */
 export function PatternPreview({ file }: { file: FileRef | null }) {
-  const url = useObjectUrl(file)
+  const url = useFileUrl(file)
   if (!file || !url) {
     return <div className="thumb lg">📄</div>
   }

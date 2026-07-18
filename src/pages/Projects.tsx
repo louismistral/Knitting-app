@@ -58,19 +58,8 @@ export function Projects() {
             className="btn block"
             disabled={!name.trim()}
             style={{ opacity: name.trim() ? 1 : 0.5 }}
-            onClick={() => {
-              const id = addProject({
-                name: name.trim(),
-                patternId: null,
-                size: '',
-                gauge: null,
-                needleSize: null,
-                startDate: new Date().toISOString().slice(0, 10),
-                endDate: null,
-                yarns: [],
-                notes: '',
-                photos: [],
-              })
+            onClick={async () => {
+              const id = await addProject(name.trim())
               setAdding(false)
               setName('')
               nav(`/projects/${id}`)
