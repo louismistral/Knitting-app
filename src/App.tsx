@@ -13,12 +13,12 @@ import { PatternDetail } from './pages/PatternDetail'
 import { Profile } from './pages/Profile'
 
 function Shell() {
-  const { session, loading } = useAuth()
+  const { session, loading, error } = useAuth()
   const load = useStore((s) => s.load)
   const reset = useStore((s) => s.reset)
 
   useEffect(() => {
-    if (session) load()
+    if (session) load().catch((err) => console.error('Failed to load data:', err))
     else reset()
   }, [session?.user.id])
 
@@ -27,6 +27,23 @@ function Shell() {
       <div className="app">
         <div className="empty" style={{ marginTop: 80 }}>
           <div className="emoji">🧶</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="app">
+        <div className="screen">
+          <div className="empty" style={{ marginTop: 60 }}>
+            <div className="emoji">⚠️</div>
+            <p>Impossible de contacter le serveur.</p>
+            <p className="hint">{error}</p>
+            <button className="btn" style={{ marginTop: 12 }} onClick={() => location.reload()}>
+              Réessayer
+            </button>
+          </div>
         </div>
       </div>
     )
