@@ -8,23 +8,48 @@ avec la version React + Supabase à la racine du repo — les deux sont gardées
 
 Une reprise fidèle du prototype, en application autonome :
 
-- **Sans build** : HTML + CSS + un module JS. Rien à compiler.
-- **Sans backend** : les données vivent dans le `localStorage` du navigateur
-  (clé `maille_v1`). Aucune dépendance à Supabase.
-- **Autonome** : [Preact](https://preactjs.com/) + [htm](https://github.com/developit/htm)
-  sont embarqués dans `vendor/` (aucun CDN au chargement).
+- **Sans build** : HTML + CSS + des modules JS. Rien à compiler.
+- **Multi-utilisateurs, avec compte** : auth par email/mot de passe (Supabase Auth).
+  Chaque utilisateur a ses propres laines, patrons et projets — isolés par des
+  règles RLS Postgres (personne ne peut lire les données d'un autre).
+- **Backend dédié** : un projet Supabase séparé de l'app React principale
+  (`maille-organic`, pas `maille-knitting`), pour ne pas mélanger les deux
+  modèles de données.
+- **Autonome** : [Preact](https://preactjs.com/), [htm](https://github.com/developit/htm)
+  et `@supabase/supabase-js` (bundlé nous-mêmes avec esbuild, les CDN publics
+  étant bloqués dans certains environnements) sont embarqués dans `vendor/`.
 
 Zones : Accueil · Bibliothèque · Yarn Stash · Projets (+ détail) · Profil — avec le même
-lien laine ↔ projet que la version principale (les grammes utilisés sont déduits du stash).
+lien laine ↔ projet que la version principale (les grammes utilisés sont déduits du stash,
+calculés à la volée à partir des allocations, jamais stockés en double).
+
+## Backend Supabase
+
+Projet dédié **`maille-organic`** (org `louismistral's Org`, région `eu-west-3`).
+
+- **Tables** : `yarns`, `colorways` (coloris/dye lots d'une laine), `patterns`,
+  `projects`, `project_allocations` (laine ↔ projet), `project_photos`. Chaque
+  table a une colonne `user_id` et une policy RLS `user_id = auth.uid()`.
+- **Storage** : buckets privés `patterns` et `photos`, fichiers rangés sous
+  `<user_id>/...` ; policies RLS sur `storage.objects` limitées à ce dossier.
+  L'app affiche les fichiers via des URLs signées (1h, régénérées au besoin).
+- **Auth** : email + mot de passe. Par défaut, Supabase exige une confirmation
+  par email avant la première connexion. Pour un flux sans friction (comme
+  l'app principale), désactive **Confirm email** dans
+  **Supabase → Authentication → Sign In / Providers → Email** du projet
+  `maille-organic`.
+- La clé publique dans `supabaseClient.js` (`sb_publishable_...`) est sans
+  danger à exposer : elle ne donne accès à rien sans passer par les policies RLS.
 
 ## Fichiers
 
 | Fichier | Rôle |
 | --- | --- |
 | `index.html` | Point d'entrée |
-| `styles.css` | Tokens et composants du design system Organic (importés tels quels) + extras du prototype |
-| `app.js` | Logique + rendu (portage du `Maille.dc.html` : logique inchangée, template `{{ }}`/`sc-for`/`sc-if` réécrit en htm) |
-| `vendor/` | Preact + htm embarqués |
+| `styles.css` | Tokens et composants du design system Organic (importés tels quels) + extras du prototype + responsive mobile |
+| `app.js` | Logique + rendu (portage du `Maille.dc.html`, template `{{ }}`/`sc-for`/`sc-if` réécrit en htm) + auth et CRUD Supabase |
+| `supabaseClient.js` | Client Supabase (URL + clé publique du projet `maille-organic`) |
+| `vendor/` | Preact, htm et `@supabase/supabase-js` embarqués |
 
 ## Lancer
 

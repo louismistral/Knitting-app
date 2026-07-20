@@ -1,20 +1,25 @@
 // Maille — version "Organic" (design importé depuis Claude Design).
-// Portage fidèle du prototype Maille.dc.html : la logique de la classe est
-// reprise telle quelle ; seul le rendu (template {{ }}/sc-for/sc-if) est
-// réécrit en htm + Preact. Données locales (localStorage 'maille_v1').
+// Portage fidèle du prototype Maille.dc.html : le template {{ }}/sc-for/sc-if
+// est réécrit en htm + Preact. Données et auth via Supabase (projet dédié
+// "maille-organic") : chaque utilisateur a son propre compte email/mot de
+// passe et ne voit que ses propres données (RLS Postgres).
 import { h, Component, render } from './vendor/preact.module.js';
 import htm from './vendor/htm.module.js';
+import { supabase } from './supabaseClient.js';
 const html = htm.bind(h);
 
 class App extends Component {
   constructor(props){
     super(props);
-    let saved=null;
-    try{ saved=JSON.parse(localStorage.getItem('maille_v1')); }catch(e){}
-    const base = saved || this.seed();
     this.state = {
+      // ---- auth ----
+      sessionChecked:false, session:null,
+      authMode:'signin', authEmail:'', authPassword:'', authError:'', authBusy:false,
+      // ---- data ----
+      loaded:false,
+      stash:[], patterns:[], projects:[], signedUrls:{},
+      // ---- UI ----
       zone:'home',
-      stash: base.stash, patterns: base.patterns, projects: base.projects,
       expandedYarn:null, addYarnOpen:false,
       yarnDraft:this.blankYarn(),
       cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
@@ -23,37 +28,100 @@ class App extends Component {
       patternDialog:false, patternDraft:this.blankPattern(),
       libFilter:'Tous',
     };
+    this._loadingData=false;
   }
-  uid(){ return Math.random().toString(36).slice(2,9); }
   blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:''}; }
-  blankPattern(){ return {name:'',category:'Pull',author:'',src:'',kind:''}; }
+  blankPattern(){ return {name:'',category:'Pull',author:'',path:'',fileName:'',kind:''}; }
   today(){ return new Date().toISOString().slice(0,10); }
-  seed(){
-    return {
-      stash:[
-        {id:'y1',brand:'De Rerum Natura',name:'Ulysse',mps:185,gps:50,blend:'100% Mérinos',colorways:[
-          {id:'c1a',color:'Blé',hex:'#d8b878',dyeLot:'A231',grams:400},
-          {id:'c1b',color:'Ardoise',hex:'#5f6b72',dyeLot:'A198',grams:250}]},
-        {id:'y2',brand:'BC Garn',name:'Semilla',mps:160,gps:50,blend:'100% Laine bio',colorways:[
-          {id:'c2a',color:'Terracotta',hex:'#c1663f',dyeLot:'L44',grams:600}]},
-        {id:'y3',brand:'Sandnes Garn',name:'Tynn Silk Mohair',mps:212,gps:25,blend:'57% Mohair · 28% Soie · 15% Laine',colorways:[
-          {id:'c3a',color:'Rose poudré',hex:'#d8a7a0',dyeLot:'7212',grams:100},
-          {id:'c3b',color:'Sauge',hex:'#9aa680',dyeLot:'8533',grams:75}]},
-      ],
-      patterns:[
-        {id:'p1',name:'Sweater No.9',category:'Pull',author:'My Favourite Things',src:'',kind:''},
-        {id:'p2',name:'Ranunculus',category:'Pull',author:'Midori Hirose',src:'',kind:''},
-        {id:'p3',name:'Sockhead Hat',category:'Bonnet',author:'Kelly McClure',src:'',kind:''},
-        {id:'p4',name:'Antler Cardigan',category:'Gilet',author:'tin can knits',src:'',kind:''},
-      ],
-      projects:[
-        {id:'pr1',name:'Pull Ulysse d’hiver',patternId:'p1',size:'M',gauge:'22',needle:'4',startDate:'2026-01-12',endDate:null,notes:'Rallonger les manches de 2 cm par rapport au patron.',allocations:[{colorwayId:'c1a',grams:350}],photos:[]},
-        {id:'pr2',name:'Bonnet mohair',patternId:'p3',size:'Adulte',gauge:'26',needle:'3',startDate:'2026-02-01',endDate:'2026-02-20',notes:'',allocations:[{colorwayId:'c3a',grams:60}],photos:[]},
-      ],
-    };
+
+  // ---- auth lifecycle ----
+  componentDidMount(){
+    supabase.auth.getSession().then(({data})=>{
+      this.setState({session:data.session, sessionChecked:true});
+      if(data.session) this.loadAll();
+    }).catch(()=>{ this.setState({sessionChecked:true}); });
+    supabase.auth.onAuthStateChange((event,session)=>{
+      if(event==='SIGNED_OUT'){
+        this.setState({session:null,sessionChecked:true,loaded:false,stash:[],patterns:[],projects:[],signedUrls:{},
+          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false});
+      } else if(session){
+        this.setState({session,sessionChecked:true});
+        if(!this.state.loaded) this.loadAll();
+      }
+    });
   }
-  componentDidUpdate(){
-    try{ localStorage.setItem('maille_v1',JSON.stringify({stash:this.state.stash,patterns:this.state.patterns,projects:this.state.projects})); }catch(e){}
+
+  setAuthField=(f)=>(e)=>this.setState({[f]:e.target.value, authError:''});
+  toggleAuthMode=()=>this.setState(s=>({authMode:s.authMode==='signup'?'signin':'signup',authError:''}));
+  translateAuthError(msg){
+    const m=(msg||'').toLowerCase();
+    if(m.includes('invalid login credentials')) return 'Email ou mot de passe incorrect.';
+    if(m.includes('user already registered')) return 'Un compte existe déjà avec cet email.';
+    if(m.includes('password should be at least')) return 'Le mot de passe doit faire au moins 6 caractères.';
+    if(m.includes('email not confirmed')) return "Confirme d'abord ton email (lien envoyé à l'inscription).";
+    if(m.includes('rate limit')) return 'Trop de tentatives, réessaie dans quelques instants.';
+    return msg || 'Une erreur est survenue.';
+  }
+  submitAuth=async(e)=>{
+    e.preventDefault();
+    const {authMode,authEmail,authPassword}=this.state;
+    if(!authEmail.trim()||!authPassword) return;
+    this.setState({authBusy:true,authError:''});
+    try{
+      if(authMode==='signup'){
+        const {data,error}=await supabase.auth.signUp({email:authEmail.trim(),password:authPassword});
+        if(error) throw error;
+        if(!data.session){ this.setState({authBusy:false,authMode:'check-email'}); return; }
+      } else {
+        const {error}=await supabase.auth.signInWithPassword({email:authEmail.trim(),password:authPassword});
+        if(error) throw error;
+      }
+      this.setState({authBusy:false,authPassword:''});
+    }catch(err){
+      this.setState({authBusy:false,authError:this.translateAuthError(err.message)});
+    }
+  };
+  signOut=async()=>{ await supabase.auth.signOut(); };
+
+  // ---- data loading ----
+  async loadAll(){
+    if(this._loadingData) return;
+    this._loadingData=true;
+    const [yq,pq,prq]=await Promise.all([
+      supabase.from('yarns').select('*, colorways(*)').order('created_at',{ascending:false}),
+      supabase.from('patterns').select('*').order('created_at',{ascending:false}),
+      supabase.from('projects').select('*, project_allocations(*), project_photos(*)').order('created_at',{ascending:false}),
+    ]);
+    const stash=(yq.data||[]).map(y=>({id:y.id,brand:y.brand,name:y.name,mps:Number(y.meters_per_skein)||0,gps:Number(y.grams_per_skein)||0,blend:y.blend,
+      colorways:(y.colorways||[]).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at))
+        .map(c=>({id:c.id,color:c.color,hex:c.hex,dyeLot:c.dye_lot,grams:Number(c.grams)||0}))}));
+    const patterns=(pq.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,author:p.author,path:p.file_path||'',fileName:p.file_name||'',kind:p.file_kind||''}));
+    const projects=(prq.data||[]).map(pr=>({id:pr.id,name:pr.name,patternId:pr.pattern_id,size:pr.size,
+      gauge:pr.gauge===null?'':String(pr.gauge), needle:pr.needle_size===null?'':String(pr.needle_size),
+      startDate:pr.start_date,endDate:pr.end_date,notes:pr.notes,
+      allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
+      photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
+    this.setState({stash,patterns,projects,loaded:true});
+    this._loadingData=false;
+    this.refreshSignedUrls();
+  }
+  async refreshSignedUrls(){
+    const patternPaths=[...new Set(this.state.patterns.filter(p=>p.kind==='img'&&p.path).map(p=>p.path))];
+    const photoPaths=[...new Set([
+      ...this.state.projects.flatMap(p=>p.photos.map(ph=>ph.path)),
+      ...(this.state.projectDraft? this.state.projectDraft.photos.map(ph=>ph.path):[]),
+    ])];
+    const updates={};
+    if(patternPaths.length){ const {data}=await supabase.storage.from('patterns').createSignedUrls(patternPaths,3600); (data||[]).forEach(d=>{ if(d.signedUrl) updates[d.path]=d.signedUrl; }); }
+    if(photoPaths.length){ const {data}=await supabase.storage.from('photos').createSignedUrls(photoPaths,3600); (data||[]).forEach(d=>{ if(d.signedUrl) updates[d.path]=d.signedUrl; }); }
+    if(Object.keys(updates).length) this.setState(s=>({signedUrls:{...s.signedUrls,...updates}}));
+  }
+  async getSignedUrl(bucket,path){ const {data}=await supabase.storage.from(bucket).createSignedUrl(path,3600); return data&&data.signedUrl?data.signedUrl:''; }
+  storagePath(file){
+    const uid=this.state.session.user.id;
+    const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    const rid=Math.random().toString(36).slice(2)+Date.now().toString(36);
+    return `${uid}/${rid}-${safe}`;
   }
 
   // ---- lookups ----
@@ -74,58 +142,139 @@ class App extends Component {
 
   // ---- yarn stash ----
   setYarnDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,[f]:v}})); };
-  addYarn=()=>{
+  addYarn=async()=>{
     const d=this.state.yarnDraft;
     if(!d.name.trim()||!d.brand.trim()) return;
-    const yarn={id:this.uid(),brand:d.brand.trim(),name:d.name.trim(),mps:Number(d.mps)||0,gps:Number(d.gps)||0,blend:d.blend.trim(),
-      colorways:[{id:this.uid(),color:d.color.trim()||'Coloris 1',hex:d.hex,dyeLot:d.dyeLot.trim(),grams:Number(d.grams)||0}]};
+    const uid=this.state.session.user.id;
+    const {data:yarnRow}=await supabase.from('yarns').insert({user_id:uid,brand:d.brand.trim(),name:d.name.trim(),
+      meters_per_skein:Number(d.mps)||0,grams_per_skein:Number(d.gps)||0,blend:d.blend.trim()}).select().single();
+    if(!yarnRow) return;
+    const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yarnRow.id,
+      color:d.color.trim()||'Coloris 1',hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
+    const yarn={id:yarnRow.id,brand:yarnRow.brand,name:yarnRow.name,mps:Number(yarnRow.meters_per_skein)||0,gps:Number(yarnRow.grams_per_skein)||0,blend:yarnRow.blend,
+      colorways:cwRow?[{id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0}]:[]};
     this.setState(s=>({stash:[yarn,...s.stash],yarnDraft:this.blankYarn(),addYarnOpen:false,expandedYarn:yarn.id}));
   };
   toggleAddYarn=()=>this.setState(s=>({addYarnOpen:!s.addYarnOpen}));
   toggleYarn=(id)=>()=>this.setState(s=>({expandedYarn:s.expandedYarn===id?null:id}));
-  deleteYarn=(id)=>(e)=>{ e.stopPropagation(); this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
-  setCwGrams=(yid,cid)=>(e)=>{ const v=Number(e.target.value)||0; this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
+  deleteYarn=(id)=>async(e)=>{ e.stopPropagation(); await supabase.from('yarns').delete().eq('id',id);
+    this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
+  setCwGrams=(yid,cid)=>async(e)=>{ const v=Number(e.target.value)||0; await supabase.from('colorways').update({grams:v}).eq('id',cid);
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
   startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}});
   setCwDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwDraft:{...s.cwDraft,[f]:v}})); };
-  addCw=(yid)=>()=>{ const d=this.state.cwDraft; if(!d.color.trim()) return;
-    const cw={id:this.uid(),color:d.color.trim(),hex:d.hex,dyeLot:d.dyeLot.trim(),grams:Number(d.grams)||0};
+  addCw=(yid)=>async()=>{ const d=this.state.cwDraft; if(!d.color.trim()) return;
+    const uid=this.state.session.user.id;
+    const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yid,color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
+    if(!cwRow) return;
+    const cw={id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0};
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:[...y.colorways,cw]}),cwFor:null})); };
-  deleteCw=(yid,cid)=>(e)=>{ e.stopPropagation(); this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
+  deleteCw=(yid,cid)=>async(e)=>{ e.stopPropagation(); await supabase.from('colorways').delete().eq('id',cid);
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
 
   // ---- patterns ----
   openPattern=()=>this.setState({patternDialog:true,patternDraft:this.blankPattern()});
-  closePattern=()=>this.setState({patternDialog:false});
+  closePattern=()=>{ const d=this.state.patternDraft; if(d.path) supabase.storage.from('patterns').remove([d.path]);
+    this.setState({patternDialog:false}); };
   setPatternDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({patternDraft:{...s.patternDraft,[f]:v}})); };
-  onPatternFile=(e)=>{ const file=e.target.files[0]; if(!file) return; const r=new FileReader();
-    const isImg=file.type.startsWith('image'); const name=file.name;
-    r.onload=()=>this.setState(s=>({patternDraft:{...s.patternDraft,src:isImg?r.result:'',kind:isImg?'img':'pdf',fileName:name,name:s.patternDraft.name||name.replace(/\.[^.]+$/,'')}}));
-    if(isImg) r.readAsDataURL(file); else this.setState(s=>({patternDraft:{...s.patternDraft,src:'',kind:'pdf',fileName:name,name:s.patternDraft.name||name.replace(/\.[^.]+$/,'')}}));
+  onPatternFile=async(e)=>{ const file=e.target.files[0]; if(!file) return;
+    const isImg=file.type.startsWith('image'); const kind=isImg?'img':'pdf'; const path=this.storagePath(file);
+    const {error}=await supabase.storage.from('patterns').upload(path,file,{contentType:file.type||undefined});
+    if(error) return;
+    const url=isImg?await this.getSignedUrl('patterns',path):'';
+    this.setState(s=>({
+      patternDraft:{...s.patternDraft,path,kind,fileName:file.name,name:s.patternDraft.name||file.name.replace(/\.[^.]+$/,'')},
+      signedUrls:url?{...s.signedUrls,[path]:url}:s.signedUrls,
+    }));
   };
-  addPattern=()=>{ const d=this.state.patternDraft; if(!d.name.trim()) return;
-    const pat={id:this.uid(),name:d.name.trim(),category:d.category,author:d.author.trim(),src:d.src||'',kind:d.kind||''};
+  addPattern=async()=>{ const d=this.state.patternDraft; if(!d.name.trim()) return;
+    const uid=this.state.session.user.id;
+    const {data:row}=await supabase.from('patterns').insert({user_id:uid,name:d.name.trim(),category:d.category,author:d.author.trim(),
+      file_path:d.path||null,file_name:d.fileName||null,file_kind:d.kind||null}).select().single();
+    if(!row) return;
+    const pat={id:row.id,name:row.name,category:row.category,author:row.author,path:row.file_path||'',fileName:row.file_name||'',kind:row.file_kind||''};
     this.setState(s=>({patterns:[pat,...s.patterns],patternDialog:false})); };
-  deletePattern=(id)=>(e)=>{ e.stopPropagation(); this.setState(s=>({patterns:s.patterns.filter(p=>p.id!==id)})); };
+  deletePattern=(id)=>async(e)=>{ e.stopPropagation(); const p=this.state.patterns.find(x=>x.id===id);
+    if(p&&p.path) await supabase.storage.from('patterns').remove([p.path]);
+    await supabase.from('patterns').delete().eq('id',id);
+    this.setState(s=>({patterns:s.patterns.filter(x=>x.id!==id)})); };
   setLibFilter=(c)=>()=>this.setState({libFilter:c});
 
   // ---- projects ----
-  newProject=()=>this.setState({zone:'projects',editingProject:'new',projectDraft:{id:this.uid(),name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]},allocPick:{colorwayId:'',grams:''}});
+  newProject=()=>this.setState({zone:'projects',editingProject:'new',
+    projectDraft:{id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]},
+    allocPick:{colorwayId:'',grams:''}});
   editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); this.setState({zone:'projects',editingProject:id,projectDraft:JSON.parse(JSON.stringify(p)),allocPick:{colorwayId:'',grams:''}}); };
-  cancelEdit=()=>this.setState({editingProject:null,projectDraft:null});
+  cancelEdit=()=>{ const d=this.state.projectDraft;
+    if(d && !d.id && d.photos.length) d.photos.forEach(ph=>supabase.storage.from('photos').remove([ph.path]));
+    this.setState({editingProject:null,projectDraft:null}); };
   setPD=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,[f]:v}})); };
-  saveProject=()=>{ const d=this.state.projectDraft; if(!d.name.trim()){ return; }
-    this.setState(s=>{ const exists=s.projects.some(p=>p.id===d.id);
-      return {projects: exists? s.projects.map(p=>p.id===d.id?d:p):[d,...s.projects], editingProject:null, projectDraft:null}; }); };
+  saveProject=async()=>{ const d=this.state.projectDraft; if(!d.name.trim()) return;
+    const uid=this.state.session.user.id;
+    const cols={user_id:uid,name:d.name.trim(),pattern_id:d.patternId||null,size:d.size,
+      gauge:d.gauge===''?null:Number(d.gauge),needle_size:d.needle===''?null:Number(d.needle),
+      start_date:d.startDate||null,end_date:d.endDate||null,notes:d.notes};
+    if(d.id){
+      await supabase.from('projects').update(cols).eq('id',d.id);
+      this.setState(s=>({projects:s.projects.map(p=>p.id===d.id?d:p),editingProject:null,projectDraft:null}));
+    } else {
+      const {data:row}=await supabase.from('projects').insert(cols).select().single();
+      if(!row) return;
+      let allocations=d.allocations;
+      if(d.allocations.length){
+        const {data:allocRows}=await supabase.from('project_allocations')
+          .insert(d.allocations.map(a=>({user_id:uid,project_id:row.id,colorway_id:a.colorwayId,grams:a.grams}))).select();
+        if(allocRows) allocations=allocRows.map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)}));
+      }
+      let photos=d.photos;
+      if(d.photos.length){
+        const {data:photoRows}=await supabase.from('project_photos')
+          .insert(d.photos.map(ph=>({user_id:uid,project_id:row.id,path:ph.path,name:ph.name,type:ph.type}))).select();
+        if(photoRows) photos=photoRows.map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}));
+      }
+      const project={...d,id:row.id,allocations,photos};
+      this.setState(s=>({projects:[project,...s.projects],editingProject:null,projectDraft:null}));
+    }
+  };
   finishProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:this.today()}}));
   reopenProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:null}}));
-  deleteProject=()=>{ const id=this.state.projectDraft.id; this.setState(s=>({projects:s.projects.filter(p=>p.id!==id),editingProject:null,projectDraft:null})); };
+  deleteProject=async()=>{ const id=this.state.projectDraft.id;
+    if(id){
+      const proj=this.state.projects.find(p=>p.id===id) || this.state.projectDraft;
+      const paths=(proj.photos||[]).map(ph=>ph.path).filter(Boolean);
+      if(paths.length) await supabase.storage.from('photos').remove(paths);
+      await supabase.from('projects').delete().eq('id',id);
+    }
+    this.setState(s=>({projects:s.projects.filter(p=>p.id!==id),editingProject:null,projectDraft:null})); };
   setAllocPick=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({allocPick:{...s.allocPick,[f]:v}})); };
-  addAlloc=()=>{ const a=this.state.allocPick; if(!a.colorwayId) return;
-    this.setState(s=>({projectDraft:{...s.projectDraft,allocations:[...s.projectDraft.allocations,{colorwayId:a.colorwayId,grams:Number(a.grams)||0}]},allocPick:{colorwayId:'',grams:''}})); };
-  setAllocGrams=(i)=>(e)=>{ const v=Number(e.target.value)||0; this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.map((a,idx)=>idx===i?{...a,grams:v}:a)}})); };
-  removeAlloc=(i)=>()=>this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.filter((a,idx)=>idx!==i)}}));
-  onProjectPhoto=(e)=>{ const file=e.target.files[0]; if(!file||!file.type.startsWith('image')) return; const r=new FileReader();
-    r.onload=()=>this.setState(s=>({projectDraft:{...s.projectDraft,photos:[...s.projectDraft.photos,r.result]}})); r.readAsDataURL(file); };
-  removePhoto=(i)=>()=>this.setState(s=>({projectDraft:{...s.projectDraft,photos:s.projectDraft.photos.filter((p,idx)=>idx!==i)}}));
+  addAlloc=async()=>{ const a=this.state.allocPick; if(!a.colorwayId) return; const grams=Number(a.grams)||0;
+    const d=this.state.projectDraft; let rowId=null;
+    if(d.id){ const uid=this.state.session.user.id;
+      const {data}=await supabase.from('project_allocations').insert({user_id:uid,project_id:d.id,colorway_id:a.colorwayId,grams}).select().single();
+      rowId=data?data.id:null;
+    }
+    this.setState(s=>({projectDraft:{...s.projectDraft,allocations:[...s.projectDraft.allocations,{rowId,colorwayId:a.colorwayId,grams}]},allocPick:{colorwayId:'',grams:''}})); };
+  setAllocGrams=(i)=>async(e)=>{ const v=Number(e.target.value)||0; const d=this.state.projectDraft; const a=d.allocations[i];
+    if(d.id && a.rowId) await supabase.from('project_allocations').update({grams:v}).eq('id',a.rowId);
+    this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.map((x,idx)=>idx===i?{...x,grams:v}:x)}})); };
+  removeAlloc=(i)=>async()=>{ const d=this.state.projectDraft; const a=d.allocations[i];
+    if(d.id && a.rowId) await supabase.from('project_allocations').delete().eq('id',a.rowId);
+    this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.filter((x,idx)=>idx!==i)}})); };
+  onProjectPhoto=async(e)=>{ const file=e.target.files[0]; if(!file||!file.type.startsWith('image')) return;
+    const path=this.storagePath(file);
+    const {error}=await supabase.storage.from('photos').upload(path,file,{contentType:file.type||undefined});
+    if(error) return;
+    const url=await this.getSignedUrl('photos',path);
+    const d=this.state.projectDraft; let rowId=null;
+    if(d.id){ const uid=this.state.session.user.id;
+      const {data}=await supabase.from('project_photos').insert({user_id:uid,project_id:d.id,path,name:file.name,type:file.type}).select().single();
+      rowId=data?data.id:null;
+    }
+    this.setState(s=>({projectDraft:{...s.projectDraft,photos:[...s.projectDraft.photos,{rowId,path,name:file.name,type:file.type}]},signedUrls:{...s.signedUrls,[path]:url}})); };
+  removePhoto=(i)=>async()=>{ const d=this.state.projectDraft; const ph=d.photos[i];
+    await supabase.storage.from('photos').remove([ph.path]);
+    if(ph.rowId) await supabase.from('project_photos').delete().eq('id',ph.rowId);
+    this.setState(s=>({projectDraft:{...s.projectDraft,photos:s.projectDraft.photos.filter((x,idx)=>idx!==i)}})); };
 
   closeModals=()=>this.setState({patternDialog:false});
 
@@ -160,7 +309,6 @@ class App extends Component {
         totalAvail,totalSkeins,cwCount:y.colorways.length,
         expanded:st.expandedYarn===y.id,toggle:this.toggleYarn(y.id),del:this.deleteYarn(y.id),
         addCwOpen:st.cwFor===y.id,startCw:this.startCw(y.id),addCw:this.addCw(y.id),
-        stackStyle:this.stackStyle(y.colorways),
         caret:`transition:transform .2s;transform:rotate(${st.expandedYarn===y.id?90:0}deg)`};
     });
 
@@ -168,10 +316,12 @@ class App extends Component {
     const catChips=cats.map(c=>({label:c,active:st.libFilter===c,pick:this.setLibFilter(c),
       style:`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${st.libFilter===c?'var(--color-accent)':'var(--color-divider)'};background:${st.libFilter===c?'var(--color-accent)':'transparent'};color:${st.libFilter===c?'var(--color-bg)':'var(--color-text)'}`}));
     const usedIn=(id)=>st.projects.filter(p=>p.patternId===id).length;
-    const patterns=st.patterns.filter(p=>st.libFilter==='Tous'||p.category===st.libFilter).map(p=>({
-      id:p.id,name:p.name,category:p.category,author:p.author,src:p.src,isImg:p.kind==='img'&&p.src,isPdf:p.kind==='pdf',
-      coverStyle:`height:150px;display:flex;align-items:center;justify-content:center;${p.kind==='img'&&p.src?`background-image:url(${p.src});background-size:cover;background-position:center`:`background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))`}`,
-      usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id)}));
+    const patterns=st.patterns.filter(p=>st.libFilter==='Tous'||p.category===st.libFilter).map(p=>{
+      const url=p.kind==='img'&&p.path? st.signedUrls[p.path]:'';
+      return {id:p.id,name:p.name,category:p.category,author:p.author,isPdf:p.kind==='pdf',
+        coverStyle:`height:150px;display:flex;align-items:center;justify-content:center;${url?`background-image:url(${url});background-size:cover;background-position:center`:`background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))`}`,
+        usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id)};
+    });
 
     let detail=null;
     if(st.projectDraft){ const d=st.projectDraft;
@@ -180,10 +330,12 @@ class App extends Component {
           grams:a.grams,dyeLot:e?e.cw.dyeLot:'',avail:e?e.cw.grams-this.allocatedTo(a.colorwayId):0,
           setGrams:this.setAllocGrams(i),remove:this.removeAlloc(i)}; });
       const options=[]; st.stash.forEach(y=>y.colorways.forEach(cw=>{ const avail=cw.grams-this.allocatedTo(cw.id); options.push({id:cw.id,label:`${y.name} · ${cw.color} — ${avail} g dispo`}); }));
-      detail={id:d.id,isNew:st.editingProject==='new',name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
-        startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos:d.photos.map((src,i)=>({src,remove:this.removePhoto(i),imgEl:h('img',{src,style:{width:'100%',height:'100%',objectFit:'cover'}})})),
+      const photos=d.photos.map((ph,i)=>{ const url=st.signedUrls[ph.path]||'';
+        return {remove:this.removePhoto(i), imgEl: url? h('img',{src:url,style:{width:'100%',height:'100%',objectFit:'cover'}}) : h('div',{style:{width:'100%',height:'100%',background:'var(--color-neutral-200)'}})}; });
+      detail={id:d.id,isNew:!d.id,name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
+        startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos,
         allocRows,options,pickId:st.allocPick.colorwayId,pickGrams:st.allocPick.grams,
-        patternOptions:st.patterns,patternSrc:this.patSrc(d.patternId),hasPatternImg:this.patHasImg(d.patternId),patternMeta:this.patMeta(d.patternId),
+        patternOptions:st.patterns,hasPatternImg:this.patHasImg(d.patternId),patternMeta:this.patMeta(d.patternId),
         patternImgEl:this.patHasImg(d.patternId)?h('div',{className:'washed',style:{borderRadius:'16px',overflow:'hidden'}},h('img',{src:this.patSrc(d.patternId),style:{width:'100%',display:'block'}})):null,
         totalGrams:projGrams(d)};
     }
@@ -193,6 +345,12 @@ class App extends Component {
       thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),
       dateLabel:p.endDate?('Fini le '+new Date(p.endDate).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})):since(p),
       open:this.editProject(p.id)}));
+
+    const email=(st.session&&st.session.user&&st.session.user.email)||'';
+    const localPart=email.split('@')[0]||'Toi';
+    const userName=localPart.charAt(0).toUpperCase()+localPart.slice(1);
+    const createdAt=st.session&&st.session.user&&st.session.user.created_at;
+    const memberSince=createdAt? ('Membre depuis '+new Date(createdAt).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})):'';
 
     return {
       goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goProjects:this.go('projects'),goProfil:this.go('profil'),
@@ -212,8 +370,8 @@ class App extends Component {
       catChips,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
       patternDialog:st.patternDialog,pd:st.patternDraft,closePattern:this.closePattern,addPattern:this.addPattern,onPatternFile:this.onPatternFile,
       setPName:this.setPatternDraft('name'),setPCat:this.setPatternDraft('category'),setPAuthor:this.setPatternDraft('author'),
-      pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',pdIsImg:st.patternDraft.kind==='img',pdSrc:st.patternDraft.src,
-      pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.src)?`background-image:url(${st.patternDraft.src});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
+      pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',
+      pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.path&&st.signedUrls[st.patternDraft.path])?`background-image:url(${st.signedUrls[st.patternDraft.path]});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
       projectCards,projectsEmpty:st.projects.length===0,detail,
       setName:this.setPD('name'),setPattern:this.setPD('patternId'),setSize:this.setPD('size'),setGauge:this.setPD('gauge'),setNeedle:this.setPD('needle'),
       setStart:this.setPD('startDate'),setNotes:this.setPD('notes'),
@@ -226,12 +384,12 @@ class App extends Component {
       profActive:active.length+' en cours',profDone:completed+' terminés',
       profFibers:this.fiberBreakdown(),
       modalOpen:st.patternDialog,closeModals:this.closeModals,
+      userName,userEmail:email,avatarLetter:userName.charAt(0).toUpperCase()||'?',memberSince,signOut:this.signOut,
     };
   }
   projHex(p,map){ const a=p.allocations[0]; const e=a&&map[a.colorwayId]; return e?e.cw.hex:'#c9a06a'; }
-  stackStyle(){ return ''; }
-  patSrc(id){ const p=this.state.patterns.find(x=>x.id===id); return p?p.src:''; }
-  patHasImg(id){ const p=this.state.patterns.find(x=>x.id===id); return !!(p&&p.kind==='img'&&p.src); }
+  patSrc(id){ const p=this.state.patterns.find(x=>x.id===id); return p&&p.path? (this.state.signedUrls[p.path]||''):''; }
+  patHasImg(id){ const p=this.state.patterns.find(x=>x.id===id); return !!(p&&p.kind==='img'&&p.path&&this.state.signedUrls[p.path]); }
   patMeta(id){ const p=this.state.patterns.find(x=>x.id===id); return p?`${p.category} · ${p.author||'Auteur inconnu'}`:''; }
   fiberBreakdown(){
     const bag={};
@@ -242,7 +400,46 @@ class App extends Component {
       bar:`height:10px;border-radius:999px;background:${palette[i%palette.length]};width:${Math.max(4,Math.round(v/total*100))}%`}));
   }
 
+  renderAuth(){
+    const st=this.state;
+    if(st.authMode==='check-email'){
+      return html`
+      <div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--color-bg);font-family:var(--font-body)">
+        <div style="max-width:380px;width:100%;text-align:center;padding:36px 28px;border-radius:26px;background:var(--color-surface);box-shadow:var(--shadow-md)">
+          <div style="font-family:var(--font-heading);font-size:24px;margin-bottom:10px">Vérifie ta boîte mail</div>
+          <p class="text-muted" style="font-size:14px">On a envoyé un lien de confirmation à <strong>${st.authEmail}</strong>. Clique dessus puis reviens te connecter ici.</p>
+          <button class="btn btn-secondary" style="margin-top:16px" onClick=${()=>this.setState({authMode:'signin',authError:''})}>Retour à la connexion</button>
+        </div>
+      </div>`;
+    }
+    return html`
+    <div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--color-bg);font-family:var(--font-body)">
+      <form onSubmit=${this.submitAuth} style="max-width:380px;width:100%;padding:36px 28px;border-radius:26px;background:var(--color-surface);box-shadow:var(--shadow-md);display:flex;flex-direction:column;gap:16px">
+        <div style="text-align:center;margin-bottom:6px">
+          <svg width="40" height="40" viewBox="0 0 32 32" fill="none" style="margin:0 auto 10px;display:block"><circle cx="16" cy="16" r="14" fill="var(--color-accent)"/><path d="M9 16c3-5 11-5 14 0M9 16c3 5 11 5 14 0M13 6c-4 4-4 16 0 20M19 6c4 4 4 16 0 20" stroke="var(--color-bg)" stroke-width="1.6" fill="none"/></svg>
+          <div style="font-family:var(--font-heading);font-size:24px">Maille</div>
+          <div class="text-muted" style="font-size:13px;margin-top:4px">${st.authMode==='signup'?'Crée ton compte':'Connecte-toi à ton carnet de tricot'}</div>
+        </div>
+        <div class="field"><label>Email</label><input class="input" type="email" required autocomplete="email" value=${st.authEmail} onInput=${this.setAuthField('authEmail')} placeholder="toi@exemple.com"/></div>
+        <div class="field"><label>Mot de passe</label><input class="input" type="password" required minlength="6" autocomplete=${st.authMode==='signup'?'new-password':'current-password'} value=${st.authPassword} onInput=${this.setAuthField('authPassword')} placeholder="••••••••"/></div>
+        ${st.authError && html`<div style="font-size:13px;color:var(--color-accent-700)">${st.authError}</div>`}
+        <button class="btn btn-primary btn-block" type="submit" disabled=${st.authBusy} style="margin:0">${st.authBusy?'…':(st.authMode==='signup'?'Créer mon compte':'Se connecter')}</button>
+        <button type="button" class="btn btn-ghost" style="justify-content:center" onClick=${this.toggleAuthMode}>${st.authMode==='signup'?'Déjà un compte ? Se connecter':"Pas de compte ? En créer un"}</button>
+      </form>
+    </div>`;
+  }
+
   render(){
+    const st=this.state;
+    if(!st.sessionChecked){
+      return html`<div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;color:var(--color-text);font-family:var(--font-body)">Chargement…</div>`;
+    }
+    if(!st.session){
+      return this.renderAuth();
+    }
+    if(!st.loaded){
+      return html`<div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;color:var(--color-text);font-family:var(--font-body)">Chargement de tes données…</div>`;
+    }
     const v=this.renderVals();
     return html`
     <div class="app-root" style="display:flex;min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
@@ -268,7 +465,7 @@ class App extends Component {
           <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px">
             <div>
               <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">${v.todayStr}</div>
-              <h1 style="margin:0;font-size:40px">Bonjour, Louise</h1>
+              <h1 style="margin:0;font-size:40px">Bonjour, ${v.userName}</h1>
               <p style="margin:6px 0 0;font-size:15px" class="text-muted">Voici où en est ton tricot aujourd'hui.</p>
             </div>
             <button class="btn btn-primary" onClick=${v.newProject}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</button>
@@ -519,10 +716,12 @@ class App extends Component {
           <h1 style="margin:0 0 22px;font-size:36px">Profil</h1>
           <div class="profil-grid" style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
             <div style="border-radius:26px;background:var(--color-surface);padding:26px;text-align:center;box-shadow:var(--shadow-sm)">
-              <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">L</div>
-              <div style="font-family:var(--font-heading);font-size:24px">Louise</div>
-              <div style="font-size:13px;margin-top:2px" class="text-muted">Tricoteuse depuis 2021</div>
+              <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">${v.avatarLetter}</div>
+              <div style="font-family:var(--font-heading);font-size:24px">${v.userName}</div>
+              <div style="font-size:12px;margin-top:2px" class="text-muted">${v.userEmail}</div>
+              <div style="font-size:13px;margin-top:6px" class="text-muted">${v.memberSince}</div>
               <div style="display:flex;justify-content:center;gap:8px;margin-top:16px"><span class="tag tag-accent">${v.profActive}</span><span class="tag tag-accent-2">${v.profDone}</span></div>
+              <button class="btn btn-ghost" style="margin-top:18px;justify-content:center;width:100%" onClick=${v.signOut}>Se déconnecter</button>
             </div>
 
             <div style="display:flex;flex-direction:column;gap:22px">
