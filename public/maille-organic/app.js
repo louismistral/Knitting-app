@@ -1,0 +1,583 @@
+// Maille — version "Organic" (design importé depuis Claude Design).
+// Portage fidèle du prototype Maille.dc.html : la logique de la classe est
+// reprise telle quelle ; seul le rendu (template {{ }}/sc-for/sc-if) est
+// réécrit en htm + Preact. Données locales (localStorage 'maille_v1').
+import { h, Component, render } from './vendor/preact.module.js';
+import htm from './vendor/htm.module.js';
+const html = htm.bind(h);
+
+class App extends Component {
+  constructor(props){
+    super(props);
+    let saved=null;
+    try{ saved=JSON.parse(localStorage.getItem('maille_v1')); }catch(e){}
+    const base = saved || this.seed();
+    this.state = {
+      zone:'home',
+      stash: base.stash, patterns: base.patterns, projects: base.projects,
+      expandedYarn:null, addYarnOpen:false,
+      yarnDraft:this.blankYarn(),
+      cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
+      editingProject:null, projectDraft:null,
+      allocPick:{colorwayId:'',grams:''},
+      patternDialog:false, patternDraft:this.blankPattern(),
+      libFilter:'Tous',
+    };
+  }
+  uid(){ return Math.random().toString(36).slice(2,9); }
+  blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:''}; }
+  blankPattern(){ return {name:'',category:'Pull',author:'',src:'',kind:''}; }
+  today(){ return new Date().toISOString().slice(0,10); }
+  seed(){
+    return {
+      stash:[
+        {id:'y1',brand:'De Rerum Natura',name:'Ulysse',mps:185,gps:50,blend:'100% Mérinos',colorways:[
+          {id:'c1a',color:'Blé',hex:'#d8b878',dyeLot:'A231',grams:400},
+          {id:'c1b',color:'Ardoise',hex:'#5f6b72',dyeLot:'A198',grams:250}]},
+        {id:'y2',brand:'BC Garn',name:'Semilla',mps:160,gps:50,blend:'100% Laine bio',colorways:[
+          {id:'c2a',color:'Terracotta',hex:'#c1663f',dyeLot:'L44',grams:600}]},
+        {id:'y3',brand:'Sandnes Garn',name:'Tynn Silk Mohair',mps:212,gps:25,blend:'57% Mohair · 28% Soie · 15% Laine',colorways:[
+          {id:'c3a',color:'Rose poudré',hex:'#d8a7a0',dyeLot:'7212',grams:100},
+          {id:'c3b',color:'Sauge',hex:'#9aa680',dyeLot:'8533',grams:75}]},
+      ],
+      patterns:[
+        {id:'p1',name:'Sweater No.9',category:'Pull',author:'My Favourite Things',src:'',kind:''},
+        {id:'p2',name:'Ranunculus',category:'Pull',author:'Midori Hirose',src:'',kind:''},
+        {id:'p3',name:'Sockhead Hat',category:'Bonnet',author:'Kelly McClure',src:'',kind:''},
+        {id:'p4',name:'Antler Cardigan',category:'Gilet',author:'tin can knits',src:'',kind:''},
+      ],
+      projects:[
+        {id:'pr1',name:'Pull Ulysse d’hiver',patternId:'p1',size:'M',gauge:'22',needle:'4',startDate:'2026-01-12',endDate:null,notes:'Rallonger les manches de 2 cm par rapport au patron.',allocations:[{colorwayId:'c1a',grams:350}],photos:[]},
+        {id:'pr2',name:'Bonnet mohair',patternId:'p3',size:'Adulte',gauge:'26',needle:'3',startDate:'2026-02-01',endDate:'2026-02-20',notes:'',allocations:[{colorwayId:'c3a',grams:60}],photos:[]},
+      ],
+    };
+  }
+  componentDidUpdate(){
+    try{ localStorage.setItem('maille_v1',JSON.stringify({stash:this.state.stash,patterns:this.state.patterns,projects:this.state.projects})); }catch(e){}
+  }
+
+  // ---- lookups ----
+  cwMap(){ const m={}; this.state.stash.forEach(y=>y.colorways.forEach(cw=>m[cw.id]={yarn:y,cw})); return m; }
+  allocatedTo(cwId){ let g=0; this.state.projects.forEach(p=>{ if(this.state.editingProject===p.id) return; p.allocations.forEach(a=>{ if(a.colorwayId===cwId) g+=Number(a.grams)||0; }); });
+    if(this.state.projectDraft){ this.state.projectDraft.allocations.forEach(a=>{ if(a.colorwayId===cwId) g+=Number(a.grams)||0; }); }
+    return g; }
+  fmt(n){ n=Math.round(n); return n>=1000? (n/1000).toFixed(n%1000===0?0:1)+' k':(''+n); }
+
+  // ---- nav ----
+  go=(z)=>()=>this.setState({zone:z,editingProject:null,projectDraft:null});
+  navStyle(z){
+    const on=this.state.zone===z && !(z==='projects'&&this.state.editingProject);
+    const onProj = z==='projects' && (this.state.zone==='projects');
+    const active = z==='projects'?onProj:on;
+    return `display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border:none;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:14.5px;font-weight:600;transition:all .15s;background:${active?'var(--color-accent)':'transparent'};color:${active?'var(--color-bg)':'var(--color-text)'}`;
+  }
+
+  // ---- yarn stash ----
+  setYarnDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,[f]:v}})); };
+  addYarn=()=>{
+    const d=this.state.yarnDraft;
+    if(!d.name.trim()||!d.brand.trim()) return;
+    const yarn={id:this.uid(),brand:d.brand.trim(),name:d.name.trim(),mps:Number(d.mps)||0,gps:Number(d.gps)||0,blend:d.blend.trim(),
+      colorways:[{id:this.uid(),color:d.color.trim()||'Coloris 1',hex:d.hex,dyeLot:d.dyeLot.trim(),grams:Number(d.grams)||0}]};
+    this.setState(s=>({stash:[yarn,...s.stash],yarnDraft:this.blankYarn(),addYarnOpen:false,expandedYarn:yarn.id}));
+  };
+  toggleAddYarn=()=>this.setState(s=>({addYarnOpen:!s.addYarnOpen}));
+  toggleYarn=(id)=>()=>this.setState(s=>({expandedYarn:s.expandedYarn===id?null:id}));
+  deleteYarn=(id)=>(e)=>{ e.stopPropagation(); this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
+  setCwGrams=(yid,cid)=>(e)=>{ const v=Number(e.target.value)||0; this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
+  startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}});
+  setCwDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwDraft:{...s.cwDraft,[f]:v}})); };
+  addCw=(yid)=>()=>{ const d=this.state.cwDraft; if(!d.color.trim()) return;
+    const cw={id:this.uid(),color:d.color.trim(),hex:d.hex,dyeLot:d.dyeLot.trim(),grams:Number(d.grams)||0};
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:[...y.colorways,cw]}),cwFor:null})); };
+  deleteCw=(yid,cid)=>(e)=>{ e.stopPropagation(); this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
+
+  // ---- patterns ----
+  openPattern=()=>this.setState({patternDialog:true,patternDraft:this.blankPattern()});
+  closePattern=()=>this.setState({patternDialog:false});
+  setPatternDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({patternDraft:{...s.patternDraft,[f]:v}})); };
+  onPatternFile=(e)=>{ const file=e.target.files[0]; if(!file) return; const r=new FileReader();
+    const isImg=file.type.startsWith('image'); const name=file.name;
+    r.onload=()=>this.setState(s=>({patternDraft:{...s.patternDraft,src:isImg?r.result:'',kind:isImg?'img':'pdf',fileName:name,name:s.patternDraft.name||name.replace(/\.[^.]+$/,'')}}));
+    if(isImg) r.readAsDataURL(file); else this.setState(s=>({patternDraft:{...s.patternDraft,src:'',kind:'pdf',fileName:name,name:s.patternDraft.name||name.replace(/\.[^.]+$/,'')}}));
+  };
+  addPattern=()=>{ const d=this.state.patternDraft; if(!d.name.trim()) return;
+    const pat={id:this.uid(),name:d.name.trim(),category:d.category,author:d.author.trim(),src:d.src||'',kind:d.kind||''};
+    this.setState(s=>({patterns:[pat,...s.patterns],patternDialog:false})); };
+  deletePattern=(id)=>(e)=>{ e.stopPropagation(); this.setState(s=>({patterns:s.patterns.filter(p=>p.id!==id)})); };
+  setLibFilter=(c)=>()=>this.setState({libFilter:c});
+
+  // ---- projects ----
+  newProject=()=>this.setState({zone:'projects',editingProject:'new',projectDraft:{id:this.uid(),name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]},allocPick:{colorwayId:'',grams:''}});
+  editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); this.setState({zone:'projects',editingProject:id,projectDraft:JSON.parse(JSON.stringify(p)),allocPick:{colorwayId:'',grams:''}}); };
+  cancelEdit=()=>this.setState({editingProject:null,projectDraft:null});
+  setPD=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,[f]:v}})); };
+  saveProject=()=>{ const d=this.state.projectDraft; if(!d.name.trim()){ return; }
+    this.setState(s=>{ const exists=s.projects.some(p=>p.id===d.id);
+      return {projects: exists? s.projects.map(p=>p.id===d.id?d:p):[d,...s.projects], editingProject:null, projectDraft:null}; }); };
+  finishProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:this.today()}}));
+  reopenProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:null}}));
+  deleteProject=()=>{ const id=this.state.projectDraft.id; this.setState(s=>({projects:s.projects.filter(p=>p.id!==id),editingProject:null,projectDraft:null})); };
+  setAllocPick=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({allocPick:{...s.allocPick,[f]:v}})); };
+  addAlloc=()=>{ const a=this.state.allocPick; if(!a.colorwayId) return;
+    this.setState(s=>({projectDraft:{...s.projectDraft,allocations:[...s.projectDraft.allocations,{colorwayId:a.colorwayId,grams:Number(a.grams)||0}]},allocPick:{colorwayId:'',grams:''}})); };
+  setAllocGrams=(i)=>(e)=>{ const v=Number(e.target.value)||0; this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.map((a,idx)=>idx===i?{...a,grams:v}:a)}})); };
+  removeAlloc=(i)=>()=>this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.filter((a,idx)=>idx!==i)}}));
+  onProjectPhoto=(e)=>{ const file=e.target.files[0]; if(!file||!file.type.startsWith('image')) return; const r=new FileReader();
+    r.onload=()=>this.setState(s=>({projectDraft:{...s.projectDraft,photos:[...s.projectDraft.photos,r.result]}})); r.readAsDataURL(file); };
+  removePhoto=(i)=>()=>this.setState(s=>({projectDraft:{...s.projectDraft,photos:s.projectDraft.photos.filter((p,idx)=>idx!==i)}}));
+
+  closeModals=()=>this.setState({patternDialog:false});
+
+  thumb(hex){ return `height:120px;background:linear-gradient(135deg,${hex} 0%,color-mix(in srgb,${hex} 60%,#000) 130%)`; }
+
+  renderVals(){
+    const st=this.state, map=this.cwMap();
+    const patName=(id)=>{ const p=st.patterns.find(x=>x.id===id); return p?p.name:'Sans patron'; };
+    const projGrams=(p)=>p.allocations.reduce((s,a)=>s+(Number(a.grams)||0),0);
+    const projMeters=(p)=>p.allocations.reduce((s,a)=>{ const e=map[a.colorwayId]; return e&&e.yarn.gps? s+(a.grams/e.yarn.gps)*e.yarn.mps:s; },0);
+    const projSkeins=(p)=>p.allocations.reduce((s,a)=>{ const e=map[a.colorwayId]; return e&&e.yarn.gps? s+(a.grams/e.yarn.gps):s; },0);
+    let gG=0,gM=0,gS=0;
+    st.projects.forEach(p=>{ gG+=projGrams(p); gM+=projMeters(p); gS+=projSkeins(p); });
+    const completed=st.projects.filter(p=>p.endDate).length;
+    const active=st.projects.filter(p=>!p.endDate);
+
+    const yarnLine=(p)=>{ if(!p.allocations.length) return 'Pas encore de laine'; const e=map[p.allocations[0].colorwayId]; const extra=p.allocations.length>1?` +${p.allocations.length-1}`:''; return e? `${e.yarn.name} · ${e.cw.color}${extra}`:'Laine retirée'; };
+    const yarnDot=(p)=>{ const e=p.allocations[0]&&map[p.allocations[0].colorwayId]; return `width:11px;height:11px;border-radius:50%;flex:none;background:${e?e.cw.hex:'var(--color-neutral-400)'}`; };
+    const since=(p)=>{ if(!p.startDate) return ''; const d=new Date(p.startDate); return 'depuis '+d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}); };
+
+    const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p.patternId),thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
+
+    const stashRows=st.stash.map(y=>{
+      const colorways=y.colorways.map(cw=>{ const alloc=this.allocatedTo(cw.id); const avail=cw.grams-alloc;
+        return {id:cw.id,color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:cw.grams,alloc,avail,
+          skeins:y.gps?(avail/y.gps).toFixed(1):'0',allocLabel:alloc>0?`${alloc} g réservés`:'',
+          swatch:`width:26px;height:26px;border-radius:50%;flex:none;background:${cw.hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12)`,
+          setGrams:this.setCwGrams(y.id,cw.id),del:this.deleteCw(y.id,cw.id)}; });
+      const totalAvail=colorways.reduce((s,c)=>s+c.avail,0);
+      const totalSkeins=y.gps?(colorways.reduce((s,c)=>s+c.avail,0)/y.gps).toFixed(1):'0';
+      return {id:y.id,brand:y.brand,name:y.name,blend:y.blend,mps:y.mps,gps:y.gps,colorways,
+        totalAvail,totalSkeins,cwCount:y.colorways.length,
+        expanded:st.expandedYarn===y.id,toggle:this.toggleYarn(y.id),del:this.deleteYarn(y.id),
+        addCwOpen:st.cwFor===y.id,startCw:this.startCw(y.id),addCw:this.addCw(y.id),
+        stackStyle:this.stackStyle(y.colorways),
+        caret:`transition:transform .2s;transform:rotate(${st.expandedYarn===y.id?90:0}deg)`};
+    });
+
+    const cats=['Tous',...Array.from(new Set(st.patterns.map(p=>p.category)))];
+    const catChips=cats.map(c=>({label:c,active:st.libFilter===c,pick:this.setLibFilter(c),
+      style:`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${st.libFilter===c?'var(--color-accent)':'var(--color-divider)'};background:${st.libFilter===c?'var(--color-accent)':'transparent'};color:${st.libFilter===c?'var(--color-bg)':'var(--color-text)'}`}));
+    const usedIn=(id)=>st.projects.filter(p=>p.patternId===id).length;
+    const patterns=st.patterns.filter(p=>st.libFilter==='Tous'||p.category===st.libFilter).map(p=>({
+      id:p.id,name:p.name,category:p.category,author:p.author,src:p.src,isImg:p.kind==='img'&&p.src,isPdf:p.kind==='pdf',
+      coverStyle:`height:150px;display:flex;align-items:center;justify-content:center;${p.kind==='img'&&p.src?`background-image:url(${p.src});background-size:cover;background-position:center`:`background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))`}`,
+      usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id)}));
+
+    let detail=null;
+    if(st.projectDraft){ const d=st.projectDraft;
+      const allocRows=d.allocations.map((a,i)=>{ const e=map[a.colorwayId];
+        return {label:e?`${e.yarn.name} · ${e.cw.color}`:'Laine supprimée',dot:e?`width:14px;height:14px;border-radius:50%;flex:none;background:${e.cw.hex}`:'',
+          grams:a.grams,dyeLot:e?e.cw.dyeLot:'',avail:e?e.cw.grams-this.allocatedTo(a.colorwayId):0,
+          setGrams:this.setAllocGrams(i),remove:this.removeAlloc(i)}; });
+      const options=[]; st.stash.forEach(y=>y.colorways.forEach(cw=>{ const avail=cw.grams-this.allocatedTo(cw.id); options.push({id:cw.id,label:`${y.name} · ${cw.color} — ${avail} g dispo`}); }));
+      detail={id:d.id,isNew:st.editingProject==='new',name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
+        startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos:d.photos.map((src,i)=>({src,remove:this.removePhoto(i),imgEl:h('img',{src,style:{width:'100%',height:'100%',objectFit:'cover'}})})),
+        allocRows,options,pickId:st.allocPick.colorwayId,pickGrams:st.allocPick.grams,
+        patternOptions:st.patterns,patternSrc:this.patSrc(d.patternId),hasPatternImg:this.patHasImg(d.patternId),patternMeta:this.patMeta(d.patternId),
+        patternImgEl:this.patHasImg(d.patternId)?h('div',{className:'washed',style:{borderRadius:'16px',overflow:'hidden'}},h('img',{src:this.patSrc(d.patternId),style:{width:'100%',display:'block'}})):null,
+        totalGrams:projGrams(d)};
+    }
+
+    const projectCards=st.projects.map(p=>({id:p.id,name:p.name,patternName:patName(p.patternId),done:!!p.endDate,
+      statusLabel:p.endDate?'Terminé':'En cours',statusClass:p.endDate?'tag tag-neutral':'tag tag-accent-2',
+      thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),
+      dateLabel:p.endDate?('Fini le '+new Date(p.endDate).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})):since(p),
+      open:this.editProject(p.id)}));
+
+    return {
+      goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goProjects:this.go('projects'),goProfil:this.go('profil'),
+      navHome:this.navStyle('home'),navLibrary:this.navStyle('library'),navStash:this.navStyle('stash'),navProjects:this.navStyle('projects'),navProfil:this.navStyle('profil'),
+      homeShow:st.zone==='home'?'':'display:none', libraryShow:st.zone==='library'?'':'display:none',
+      stashShow:st.zone==='stash'?'':'display:none', profilShow:st.zone==='profil'?'':'display:none',
+      projectsShow:(st.zone==='projects'&&!st.projectDraft)?'':'display:none', detailShow:(st.zone==='projects'&&st.projectDraft)?'':'display:none',
+      todayStr:new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}),
+      statCompleted:completed,statSkeins:gS.toFixed(1),statGrams:this.fmt(gG),statMeters:this.fmt(gM),
+      statGramsShort:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0))+' g',
+      activeCount:active.length,activeProjects,noActive:active.length===0,newProject:this.newProject,
+      stashRows,addYarnOpen:st.addYarnOpen,toggleAddYarn:this.toggleAddYarn,addYarn:this.addYarn,yd:st.yarnDraft,
+      setYBrand:this.setYarnDraft('brand'),setYName:this.setYarnDraft('name'),setYMps:this.setYarnDraft('mps'),setYGps:this.setYarnDraft('gps'),
+      setYBlend:this.setYarnDraft('blend'),setYColor:this.setYarnDraft('color'),setYHex:this.setYarnDraft('hex'),setYDye:this.setYarnDraft('dyeLot'),setYGrams:this.setYarnDraft('grams'),
+      cwDraft:st.cwDraft,setCwColor:this.setCwDraft('color'),setCwHex:this.setCwDraft('hex'),setCwDye:this.setCwDraft('dyeLot'),setCwGramsD:this.setCwDraft('grams'),
+      stashEmpty:st.stash.length===0,
+      catChips,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
+      patternDialog:st.patternDialog,pd:st.patternDraft,closePattern:this.closePattern,addPattern:this.addPattern,onPatternFile:this.onPatternFile,
+      setPName:this.setPatternDraft('name'),setPCat:this.setPatternDraft('category'),setPAuthor:this.setPatternDraft('author'),
+      pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',pdIsImg:st.patternDraft.kind==='img',pdSrc:st.patternDraft.src,
+      pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.src)?`background-image:url(${st.patternDraft.src});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
+      projectCards,projectsEmpty:st.projects.length===0,detail,
+      setName:this.setPD('name'),setPattern:this.setPD('patternId'),setSize:this.setPD('size'),setGauge:this.setPD('gauge'),setNeedle:this.setPD('needle'),
+      setStart:this.setPD('startDate'),setNotes:this.setPD('notes'),
+      cancelEdit:this.cancelEdit,saveProject:this.saveProject,finishProject:this.finishProject,reopenProject:this.reopenProject,deleteProject:this.deleteProject,
+      setPickId:this.setAllocPick('colorwayId'),setPickGrams:this.setAllocPick('grams'),addAlloc:this.addAlloc,
+      onProjectPhoto:this.onProjectPhoto,
+      profPatterns:st.patterns.length,profYarns:st.stash.length,
+      profColorways:st.stash.reduce((s,y)=>s+y.colorways.length,0),
+      profOwned:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0)),
+      profActive:active.length+' en cours',profDone:completed+' terminés',
+      profFibers:this.fiberBreakdown(),
+      modalOpen:st.patternDialog,closeModals:this.closeModals,
+    };
+  }
+  projHex(p,map){ const a=p.allocations[0]; const e=a&&map[a.colorwayId]; return e?e.cw.hex:'#c9a06a'; }
+  stackStyle(){ return ''; }
+  patSrc(id){ const p=this.state.patterns.find(x=>x.id===id); return p?p.src:''; }
+  patHasImg(id){ const p=this.state.patterns.find(x=>x.id===id); return !!(p&&p.kind==='img'&&p.src); }
+  patMeta(id){ const p=this.state.patterns.find(x=>x.id===id); return p?`${p.category} · ${p.author||'Auteur inconnu'}`:''; }
+  fiberBreakdown(){
+    const bag={};
+    this.state.stash.forEach(y=>{ const g=y.colorways.reduce((s,c)=>s+c.grams,0); const key=(y.blend||'Autre').split(/[·,]/)[0].replace(/\d+%/,'').trim()||'Autre'; bag[key]=(bag[key]||0)+g; });
+    const total=Object.values(bag).reduce((s,v)=>s+v,0)||1;
+    const palette=['var(--color-accent-500)','var(--color-accent-2-500)','var(--color-accent-300)','var(--color-accent-2-300)','var(--color-neutral-400)'];
+    return Object.entries(bag).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v],i)=>({label:k,grams:v,pct:Math.round(v/total*100),
+      bar:`height:10px;border-radius:999px;background:${palette[i%palette.length]};width:${Math.max(4,Math.round(v/total*100))}%`}));
+  }
+
+  render(){
+    const v=this.renderVals();
+    return html`
+    <div style="display:flex;min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
+
+      <aside style="width:236px;flex:none;padding:26px 18px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh;border-right:1px solid var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:11px;padding:0 8px 22px">
+          <svg width="34" height="34" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" fill="var(--color-accent)"/><path d="M9 16c3-5 11-5 14 0M9 16c3 5 11 5 14 0M13 6c-4 4-4 16 0 20M19 6c4 4 4 16 0 20" stroke="var(--color-bg)" stroke-width="1.6" fill="none"/></svg>
+          <div><div style="font-family:var(--font-heading);font-size:20px;line-height:1">Maille</div><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent)">carnet de tricot</div></div>
+        </div>
+        <button onClick=${v.goHome} style=${v.navHome}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>Accueil</button>
+        <button onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg>Bibliothèque</button>
+        <button onClick=${v.goStash} style=${v.navStash}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 8c4 3 8 5 11 3M5 14c5 2 9 1 13-4M9 20c1-6 3-10 7-13"/></svg>Yarn Stash</button>
+        <button onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>Projets</button>
+        <button onClick=${v.goProfil} style=${v.navProfil}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>Profil</button>
+        <div style="margin-top:auto;padding:14px 12px;border-radius:20px;background:var(--color-accent-2-100)">
+          <div style="font-size:11px;color:var(--color-accent-2-700);line-height:1.4">${v.activeCount} projet(s) en cours · ${v.statGramsShort} de laine en réserve</div>
+        </div>
+      </aside>
+
+      <main style="flex:1;min-width:0;padding:34px 40px 60px;max-width:1120px">
+
+        <section style=${v.homeShow}>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px">
+            <div>
+              <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">${v.todayStr}</div>
+              <h1 style="margin:0;font-size:40px">Bonjour, Louise</h1>
+              <p style="margin:6px 0 0;font-size:15px" class="text-muted">Voici où en est ton tricot aujourd'hui.</p>
+            </div>
+            <button class="btn btn-primary" onClick=${v.newProject}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:34px">
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:38px;line-height:1;color:var(--color-accent)">${v.statCompleted}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Projets terminés</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statSkeins}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Pelotes utilisées</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statGrams}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Grammes utilisés</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statMeters}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Mètres tricotés</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
+            <h2 style="margin:0;font-size:24px">Projets en cours</h2>
+            <a onClick=${v.goProjects} style="cursor:pointer;font-size:13px;color:var(--color-accent)">Tout voir →</a>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+            ${v.activeProjects.map(p=>html`
+              <div onClick=${p.open} style="cursor:pointer;border-radius:24px;background:var(--color-surface);overflow:hidden;animation:pop .25s ease both;box-shadow:var(--shadow-sm)">
+                <div style=${p.thumbStyle}></div>
+                <div style="padding:16px 18px 18px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px"><span class="tag tag-accent-2">En cours</span><span style="font-size:11px" class="text-muted">${p.since}</span></div>
+                  <div style="font-family:var(--font-heading);font-size:19px;line-height:1.15">${p.name}</div>
+                  <div style="font-size:13px;margin-top:4px" class="text-muted">${p.patternName}</div>
+                  <div style="font-size:12px;margin-top:12px;display:flex;align-items:center;gap:7px"><span style=${p.yarnDot}></span>${p.yarnLine}</div>
+                </div>
+              </div>`)}
+            ${v.noActive && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:24px" class="text-muted">Aucun projet en cours. Lances-en un nouveau !</div>`}
+          </div>
+        </section>
+
+        <section style=${v.stashShow}>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:8px">
+            <div>
+              <h1 style="margin:0;font-size:36px">Yarn Stash</h1>
+              <p style="margin:6px 0 0" class="text-muted">Ta réserve de laine. Les grammes se mettent à jour quand tu associes une laine à un projet.</p>
+            </div>
+            <button class="btn btn-primary" onClick=${v.toggleAddYarn}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une laine</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;padding:10px 18px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+            <div></div><div>Laine</div><div>Composition</div><div>Coloris</div><div>Disponible</div><div></div>
+          </div>
+
+          ${v.addYarnOpen && html`
+            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:14px;animation:pop .2s ease both">
+              <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:14px">Nouvelle laine</div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+                <div class="field"><label>Marque</label><input class="input" value=${v.yd.brand} onInput=${v.setYBrand} placeholder="De Rerum Natura"/></div>
+                <div class="field"><label>Nom</label><input class="input" value=${v.yd.name} onInput=${v.setYName} placeholder="Ulysse"/></div>
+                <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yd.mps} onInput=${v.setYMps} placeholder="185"/></div>
+                <div class="field"><label>Grammes / pelote</label><input class="input" type="number" value=${v.yd.gps} onInput=${v.setYGps} placeholder="50"/></div>
+                <div class="field" style="grid-column:1/3"><label>Composition (blend)</label><input class="input" value=${v.yd.blend} onInput=${v.setYBlend} placeholder="100% Mérinos"/></div>
+                <div class="field"><label>Coloris</label><input class="input" value=${v.yd.color} onInput=${v.setYColor} placeholder="Blé"/></div>
+                <div class="field"><label>Dye lot</label><input class="input" value=${v.yd.dyeLot} onInput=${v.setYDye} placeholder="A231"/></div>
+                <div class="field"><label>Couleur</label><input type="color" value=${v.yd.hex} onInput=${v.setYHex} style="width:100%;height:36px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-surface);cursor:pointer;display:block"/></div>
+                <div class="field"><label>Grammes en stock</label><input class="input" type="number" value=${v.yd.grams} onInput=${v.setYGrams} placeholder="400"/></div>
+                <div style="display:flex;align-items:flex-end;gap:8px;grid-column:3/5;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.toggleAddYarn}>Annuler</button><button class="btn btn-primary" onClick=${v.addYarn}>Ajouter au stash</button></div>
+              </div>
+            </div>`}
+
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${v.stashRows.map(y=>html`
+              <div style="border-radius:22px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm)">
+                <div onClick=${y.toggle} style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;align-items:center;padding:14px 18px;cursor:pointer">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" style=${y.caret}><path d="M9 6l6 6-6 6"/></svg>
+                  <div><div style="font-family:var(--font-heading);font-size:17px;line-height:1.1">${y.name}</div><div style="font-size:12px" class="text-muted">${y.brand}</div></div>
+                  <div style="font-size:12.5px" class="text-muted">${y.blend}</div>
+                  <div style="font-size:13px">${y.cwCount} coloris</div>
+                  <div><span style="font-family:var(--font-heading);font-size:19px">${y.totalAvail}</span> <span style="font-size:12px" class="text-muted">g · ${y.totalSkeins} pelotes</span></div>
+                  <button class="btn btn-icon btn-ghost" onClick=${y.del} title="Supprimer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                </div>
+                ${y.expanded && html`
+                  <div style="padding:4px 18px 18px;animation:pop .2s ease both">
+                    <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
+                      ${y.colorways.map(cw=>html`
+                        <div style="display:grid;grid-template-columns:34px 1fr auto auto auto 40px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
+                          <div style=${cw.swatch}></div>
+                          <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
+                          <div style="font-size:12px" class="text-muted">${cw.skeins} pelotes</div>
+                          <div style="display:flex;align-items:center;gap:6px"><input class="input" type="number" value=${cw.grams} onInput=${cw.setGrams} style="width:86px;text-align:right"/><span style="font-size:12px" class="text-muted">g total</span></div>
+                          <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
+                          <button class="btn btn-icon btn-ghost" onClick=${cw.del}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                        </div>`)}
+                      ${y.addCwOpen && html`
+                        <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
+                          <div class="field" style="margin:0"><label>Couleur</label><input type="color" value=${v.cwDraft.hex} onInput=${v.setCwHex} style="width:44px;height:36px;border:1px solid var(--color-divider);border-radius:999px;cursor:pointer;display:block"/></div>
+                          <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwDraft.color} onInput=${v.setCwColor} placeholder="Sauge"/></div>
+                          <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwDraft.dyeLot} onInput=${v.setCwDye} placeholder="8533"/></div>
+                          <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwDraft.grams} onInput=${v.setCwGramsD} placeholder="100"/></div>
+                          <button class="btn btn-primary" onClick=${y.addCw}>Ajouter</button>
+                        </div>`}
+                      <button class="btn btn-ghost" onClick=${y.startCw} style="align-self:flex-start"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un coloris / dye lot</button>
+                    </div>
+                  </div>`}
+              </div>`)}
+            ${v.stashEmpty && html`<div style="padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Ton stash est vide. Ajoute ta première laine.</div>`}
+          </div>
+        </section>
+
+        <section style=${v.libraryShow}>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px">
+            <div>
+              <h1 style="margin:0;font-size:36px">Bibliothèque</h1>
+              <p style="margin:6px 0 0" class="text-muted">Tes patrons, classés par type et par auteur. Associe-les à tes projets.</p>
+            </div>
+            <button class="btn btn-primary" onClick=${v.openPattern}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un patron</button>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px">
+            ${v.catChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px">
+            ${v.patterns.map(p=>html`
+              <div style="border-radius:22px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm);animation:pop .25s ease both">
+                <div class="washed" style=${p.coverStyle}>
+                  ${p.isPdf && html`<div style="display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--color-accent-700)"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span style="font-size:11px;font-weight:600">PDF</span></div>`}
+                </div>
+                <div style="padding:15px 17px 17px">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                    <div><span class="tag tag-accent">${p.category}</span></div>
+                    <button class="btn btn-icon btn-ghost" onClick=${p.del} style="margin:-6px -6px 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                  </div>
+                  <div style="font-family:var(--font-heading);font-size:18px;line-height:1.15;margin-top:10px">${p.name}</div>
+                  <div style="font-size:13px;margin-top:3px" class="text-muted">${p.author}</div>
+                  <div style="font-size:11px;margin-top:12px;color:var(--color-accent-2-700)">${p.usedLabel}</div>
+                </div>
+              </div>`)}
+            ${v.patternsEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucun patron dans cette catégorie.</div>`}
+          </div>
+        </section>
+
+        <section style=${v.projectsShow}>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px">
+            <div>
+              <h1 style="margin:0;font-size:36px">Projets</h1>
+              <p style="margin:6px 0 0" class="text-muted">Tes tricots en cours et terminés. Plusieurs projets actifs, c'est permis.</p>
+            </div>
+            <button class="btn btn-primary" onClick=${v.newProject}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px">
+            ${v.projectCards.map(p=>html`
+              <div onClick=${p.open} style="cursor:pointer;border-radius:24px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm);animation:pop .25s ease both">
+                <div style=${p.thumbStyle}></div>
+                <div style="padding:16px 18px 18px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px"><span class=${p.statusClass}>${p.statusLabel}</span><span style="font-size:11px" class="text-muted">${p.dateLabel}</span></div>
+                  <div style="font-family:var(--font-heading);font-size:19px;line-height:1.15">${p.name}</div>
+                  <div style="font-size:13px;margin-top:4px" class="text-muted">${p.patternName}</div>
+                  <div style="font-size:12px;margin-top:12px;display:flex;align-items:center;gap:7px"><span style=${p.yarnDot}></span>${p.yarnLine}</div>
+                </div>
+              </div>`)}
+            ${v.projectsEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucun projet. Crée ton premier tricot.</div>`}
+          </div>
+        </section>
+
+        <section style=${v.detailShow}>
+          ${v.detail && html`
+            <div>
+              <button class="btn btn-ghost" onClick=${v.cancelEdit} style="margin-bottom:14px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Tous les projets</button>
+              <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:28px;align-items:start">
+
+                <div style="display:flex;flex-direction:column;gap:20px">
+                  <input class="input" value=${v.detail.name} onInput=${v.setName} placeholder="Nom du projet" style="font-family:var(--font-heading);font-size:26px;height:auto;padding:12px 18px;border-radius:18px"/>
+
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+                    <div class="field"><label>Taille</label><input class="input" value=${v.detail.size} onInput=${v.setSize} placeholder="M"/></div>
+                    <div class="field"><label>Gauge (m. / 10 cm)</label><input class="input" type="number" value=${v.detail.gauge} onInput=${v.setGauge} placeholder="22"/></div>
+                    <div class="field"><label>Aiguilles (mm)</label><input class="input" type="number" step="0.5" value=${v.detail.needle} onInput=${v.setNeedle} placeholder="4"/></div>
+                    <div class="field"><label>Patron</label>
+                      <select class="input" value=${v.detail.patternId} onChange=${v.setPattern}>
+                        <option value="">Aucun patron</option>
+                        ${v.detail.patternOptions.map(po=>html`<option value=${po.id}>${po.name}</option>`)}
+                      </select>
+                    </div>
+                    <div class="field"><label>Date de début</label><input class="input" type="date" value=${v.detail.startDate} onInput=${v.setStart}/></div>
+                    <div class="field"><label>Statut</label><input class="input" value=${v.detail.endDate} disabled placeholder="En cours" style="opacity:.7"/></div>
+                  </div>
+
+                  <div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><h4 style="margin:0;font-size:18px">Laine associée</h4><span style="font-size:12px" class="text-muted">${v.detail.totalGrams} g au total</span></div>
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+                      ${v.detail.allocRows.map(a=>html`
+                        <div style="display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-radius:16px;background:var(--color-surface)">
+                          <span style=${a.dot}></span>
+                          <div><div style="font-weight:600;font-size:14px">${a.label}</div><div style="font-size:11px" class="text-muted">Dispo restant : ${a.avail} g</div></div>
+                          <input class="input" type="number" value=${a.grams} onInput=${a.setGrams} style="width:92px;text-align:right"/>
+                          <span style="font-size:12px" class="text-muted">g utilisés</span>
+                          <button class="btn btn-icon btn-ghost" onClick=${a.remove}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                        </div>`)}
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding:12px 14px;border-radius:16px;border:1px dashed var(--color-accent-2)">
+                      <div class="field" style="margin:0"><label>Depuis le stash</label>
+                        <select class="input" value=${v.detail.pickId} onChange=${v.setPickId}>
+                          <option value="">Choisir une laine…</option>
+                          ${v.detail.options.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
+                        </select>
+                      </div>
+                      <div class="field" style="margin:0;width:110px"><label>Grammes</label><input class="input" type="number" value=${v.detail.pickGrams} onInput=${v.setPickGrams} placeholder="200"/></div>
+                      <button class="btn btn-secondary" onClick=${v.addAlloc}>Associer</button>
+                    </div>
+                    <p style="font-size:11.5px;margin:8px 2px 0" class="text-muted">Les grammes utilisés sont déduits du stash. Baisse la quantité en fin de projet pour rendre le surplus.</p>
+                  </div>
+
+                  <div class="field"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
+                  <div style="border-radius:22px;background:var(--color-surface);padding:18px">
+                    <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:12px">Aperçu du patron</div>
+                    ${v.detail.hasPatternImg && v.detail.patternImgEl}
+                    ${!v.detail.hasPatternImg && html`<div style="height:150px;border-radius:16px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;align-items:center;justify-content:center;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg></div>`}
+                    <div style="font-size:13px;margin-top:10px" class="text-muted">${v.detail.patternMeta}</div>
+                  </div>
+
+                  <div style="border-radius:22px;background:var(--color-surface);padding:18px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div><label class="btn btn-ghost" style="cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter<input type="file" accept="image/*" onChange=${v.onProjectPhoto}/></label></div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                      ${v.detail.photos.map(ph=>html`
+                        <div style="position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1">${ph.imgEl}<button onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button></div>`)}
+                    </div>
+                  </div>
+
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <button class="btn btn-primary btn-block" onClick=${v.saveProject} style="margin:0">Enregistrer</button>
+                    ${v.detail.done && html`<button class="btn btn-secondary btn-block" onClick=${v.reopenProject} style="margin:0">Rouvrir le projet</button>`}
+                    ${!v.detail.done && html`<button class="btn btn-secondary btn-block" onClick=${v.finishProject} style="margin:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg>J'ai fini le projet</button>`}
+                    <button class="btn btn-ghost" onClick=${v.deleteProject} style="justify-content:center">Supprimer</button>
+                  </div>
+                </div>
+              </div>
+            </div>`}
+        </section>
+
+        <section style=${v.profilShow}>
+          <h1 style="margin:0 0 22px;font-size:36px">Profil</h1>
+          <div style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
+            <div style="border-radius:26px;background:var(--color-surface);padding:26px;text-align:center;box-shadow:var(--shadow-sm)">
+              <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">L</div>
+              <div style="font-family:var(--font-heading);font-size:24px">Louise</div>
+              <div style="font-size:13px;margin-top:2px" class="text-muted">Tricoteuse depuis 2021</div>
+              <div style="display:flex;justify-content:center;gap:8px;margin-top:16px"><span class="tag tag-accent">${v.profActive}</span><span class="tag tag-accent-2">${v.profDone}</span></div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:22px">
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px;color:var(--color-accent)">${v.profOwned}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Grammes en réserve</div></div>
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profYarns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Laines · ${v.profColorways} coloris</div></div>
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profPatterns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Patrons en bibliothèque</div></div>
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statMeters}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Mètres tricotés</div></div>
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statGrams}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Grammes utilisés</div></div>
+                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statSkeins}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Pelotes utilisées</div></div>
+              </div>
+              <div style="border-radius:22px;background:var(--color-surface);padding:22px">
+                <h4 style="margin:0 0 16px;font-size:18px">Ta réserve par fibre</h4>
+                <div style="display:flex;flex-direction:column;gap:14px">
+                  ${v.profFibers.map(f=>html`
+                    <div>
+                      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span style="font-weight:600">${f.label}</span><span class="text-muted">${f.grams} g · ${f.pct}%</span></div>
+                      <div style="background:var(--color-bg);border-radius:999px"><div style=${f.bar}></div></div>
+                    </div>`)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    ${v.patternDialog && html`
+      <div class="dialog-backdrop" style="z-index:50">
+        <div class="dialog" style="width:min(460px,100%)">
+          <div class="dialog-title">Ajouter un patron</div>
+          <label style="display:block;cursor:pointer">
+            <div class="washed" style=${'height:150px;border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;'+v.pdCover}>
+              ${!v.pdHasFile && html`
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-700)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+                <span style="font-size:12px;color:var(--color-accent-700)">Déposer un PDF ou une image</span>`}
+              ${v.pdHasFile && html`<span style="font-size:13px;color:var(--color-accent-800);font-weight:600">${v.pdFileName}</span>`}
+            </div>
+            <input type="file" accept="image/*,application/pdf" onChange=${v.onPatternFile}/>
+          </label>
+          <div class="field"><label>Nom du patron</label><input class="input" value=${v.pd.name} onInput=${v.setPName} placeholder="Sweater No.9"/></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="field"><label>Catégorie</label>
+              <select class="input" value=${v.pd.category} onChange=${v.setPCat}>
+                <option>Pull</option><option>Gilet</option><option>Bonnet</option><option>Chaussettes</option><option>Écharpe</option><option>Châle</option><option>Accessoire</option><option>Autre</option>
+              </select>
+            </div>
+            <div class="field"><label>Auteur / créateur</label><input class="input" value=${v.pd.author} onInput=${v.setPAuthor} placeholder="My Favourite Things"/></div>
+          </div>
+          <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.addPattern}>Ajouter</button></div>
+        </div>
+      </div>`}
+    `;
+  }
+}
+
+render(h(App), document.getElementById('app'));
