@@ -245,27 +245,27 @@ class App extends Component {
   render(){
     const v=this.renderVals();
     return html`
-    <div style="display:flex;min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
+    <div class="app-root" style="display:flex;min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
 
-      <aside style="width:236px;flex:none;padding:26px 18px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh;border-right:1px solid var(--color-divider)">
-        <div style="display:flex;align-items:center;gap:11px;padding:0 8px 22px">
+      <aside class="side" style="width:236px;flex:none;padding:26px 18px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh;border-right:1px solid var(--color-divider)">
+        <div class="side-brand" style="display:flex;align-items:center;gap:11px;padding:0 8px 22px">
           <svg width="34" height="34" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" fill="var(--color-accent)"/><path d="M9 16c3-5 11-5 14 0M9 16c3 5 11 5 14 0M13 6c-4 4-4 16 0 20M19 6c4 4 4 16 0 20" stroke="var(--color-bg)" stroke-width="1.6" fill="none"/></svg>
           <div><div style="font-family:var(--font-heading);font-size:20px;line-height:1">Maille</div><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent)">carnet de tricot</div></div>
         </div>
-        <button onClick=${v.goHome} style=${v.navHome}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>Accueil</button>
-        <button onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg>Bibliothèque</button>
-        <button onClick=${v.goStash} style=${v.navStash}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 8c4 3 8 5 11 3M5 14c5 2 9 1 13-4M9 20c1-6 3-10 7-13"/></svg>Yarn Stash</button>
-        <button onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>Projets</button>
-        <button onClick=${v.goProfil} style=${v.navProfil}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>Profil</button>
-        <div style="margin-top:auto;padding:14px 12px;border-radius:20px;background:var(--color-accent-2-100)">
+        <button class="nav-btn" aria-label="Accueil" title="Accueil" onClick=${v.goHome} style=${v.navHome}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg><span class="nav-label">Accueil</span></button>
+        <button class="nav-btn" aria-label="Bibliothèque" title="Bibliothèque" onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg><span class="nav-label">Bibliothèque</span></button>
+        <button class="nav-btn" aria-label="Yarn Stash" title="Yarn Stash" onClick=${v.goStash} style=${v.navStash}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 8c4 3 8 5 11 3M5 14c5 2 9 1 13-4M9 20c1-6 3-10 7-13"/></svg><span class="nav-label">Yarn Stash</span></button>
+        <button class="nav-btn" aria-label="Projets" title="Projets" onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="nav-label">Projets</span></button>
+        <button class="nav-btn" aria-label="Profil" title="Profil" onClick=${v.goProfil} style=${v.navProfil}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg><span class="nav-label">Profil</span></button>
+        <div class="side-summary" style="margin-top:auto;padding:14px 12px;border-radius:20px;background:var(--color-accent-2-100)">
           <div style="font-size:11px;color:var(--color-accent-2-700);line-height:1.4">${v.activeCount} projet(s) en cours · ${v.statGramsShort} de laine en réserve</div>
         </div>
       </aside>
 
-      <main style="flex:1;min-width:0;padding:34px 40px 60px;max-width:1120px">
+      <main class="main" style="flex:1;min-width:0;padding:34px 40px 60px;max-width:1120px">
 
         <section style=${v.homeShow}>
-          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px">
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px">
             <div>
               <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">${v.todayStr}</div>
               <h1 style="margin:0;font-size:40px">Bonjour, Louise</h1>
@@ -274,7 +274,7 @@ class App extends Component {
             <button class="btn btn-primary" onClick=${v.newProject}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</button>
           </div>
 
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:34px">
+          <div class="stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:34px">
             <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
               <div style="font-family:var(--font-heading);font-size:38px;line-height:1;color:var(--color-accent)">${v.statCompleted}</div>
               <div style="font-size:13px;margin-top:8px" class="text-muted">Projets terminés</div>
@@ -313,7 +313,7 @@ class App extends Component {
         </section>
 
         <section style=${v.stashShow}>
-          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:8px">
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:8px">
             <div>
               <h1 style="margin:0;font-size:36px">Yarn Stash</h1>
               <p style="margin:6px 0 0" class="text-muted">Ta réserve de laine. Les grammes se mettent à jour quand tu associes une laine à un projet.</p>
@@ -321,14 +321,14 @@ class App extends Component {
             <button class="btn btn-primary" onClick=${v.toggleAddYarn}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une laine</button>
           </div>
 
-          <div style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;padding:10px 18px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+          <div class="stash-head" style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;padding:10px 18px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
             <div></div><div>Laine</div><div>Composition</div><div>Coloris</div><div>Disponible</div><div></div>
           </div>
 
           ${v.addYarnOpen && html`
             <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:14px;animation:pop .2s ease both">
               <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:14px">Nouvelle laine</div>
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+              <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
                 <div class="field"><label>Marque</label><input class="input" value=${v.yd.brand} onInput=${v.setYBrand} placeholder="De Rerum Natura"/></div>
                 <div class="field"><label>Nom</label><input class="input" value=${v.yd.name} onInput=${v.setYName} placeholder="Ulysse"/></div>
                 <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yd.mps} onInput=${v.setYMps} placeholder="185"/></div>
@@ -345,11 +345,11 @@ class App extends Component {
           <div style="display:flex;flex-direction:column;gap:10px">
             ${v.stashRows.map(y=>html`
               <div style="border-radius:22px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm)">
-                <div onClick=${y.toggle} style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;align-items:center;padding:14px 18px;cursor:pointer">
+                <div onClick=${y.toggle} class="stash-row" style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;align-items:center;padding:14px 18px;cursor:pointer">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" style=${y.caret}><path d="M9 6l6 6-6 6"/></svg>
-                  <div><div style="font-family:var(--font-heading);font-size:17px;line-height:1.1">${y.name}</div><div style="font-size:12px" class="text-muted">${y.brand}</div></div>
-                  <div style="font-size:12.5px" class="text-muted">${y.blend}</div>
-                  <div style="font-size:13px">${y.cwCount} coloris</div>
+                  <div class="stash-name"><div style="font-family:var(--font-heading);font-size:17px;line-height:1.1">${y.name}</div><div style="font-size:12px" class="text-muted">${y.brand}</div></div>
+                  <div class="text-muted mob-hide" style="font-size:12.5px">${y.blend}</div>
+                  <div class="mob-hide" style="font-size:13px">${y.cwCount} coloris</div>
                   <div><span style="font-family:var(--font-heading);font-size:19px">${y.totalAvail}</span> <span style="font-size:12px" class="text-muted">g · ${y.totalSkeins} pelotes</span></div>
                   <button class="btn btn-icon btn-ghost" onClick=${y.del} title="Supprimer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
                 </div>
@@ -357,16 +357,16 @@ class App extends Component {
                   <div style="padding:4px 18px 18px;animation:pop .2s ease both">
                     <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
                       ${y.colorways.map(cw=>html`
-                        <div style="display:grid;grid-template-columns:34px 1fr auto auto auto 40px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
+                        <div class="cw-row" style="display:grid;grid-template-columns:34px 1fr auto auto auto 40px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
                           <div style=${cw.swatch}></div>
                           <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
-                          <div style="font-size:12px" class="text-muted">${cw.skeins} pelotes</div>
+                          <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
                           <div style="display:flex;align-items:center;gap:6px"><input class="input" type="number" value=${cw.grams} onInput=${cw.setGrams} style="width:86px;text-align:right"/><span style="font-size:12px" class="text-muted">g total</span></div>
                           <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
                           <button class="btn btn-icon btn-ghost" onClick=${cw.del}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
                         </div>`)}
                       ${y.addCwOpen && html`
-                        <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
+                        <div class="cw-form" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
                           <div class="field" style="margin:0"><label>Couleur</label><input type="color" value=${v.cwDraft.hex} onInput=${v.setCwHex} style="width:44px;height:36px;border:1px solid var(--color-divider);border-radius:999px;cursor:pointer;display:block"/></div>
                           <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwDraft.color} onInput=${v.setCwColor} placeholder="Sauge"/></div>
                           <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwDraft.dyeLot} onInput=${v.setCwDye} placeholder="8533"/></div>
@@ -382,7 +382,7 @@ class App extends Component {
         </section>
 
         <section style=${v.libraryShow}>
-          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px">
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px">
             <div>
               <h1 style="margin:0;font-size:36px">Bibliothèque</h1>
               <p style="margin:6px 0 0" class="text-muted">Tes patrons, classés par type et par auteur. Associe-les à tes projets.</p>
@@ -415,7 +415,7 @@ class App extends Component {
         </section>
 
         <section style=${v.projectsShow}>
-          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px">
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px">
             <div>
               <h1 style="margin:0;font-size:36px">Projets</h1>
               <p style="margin:6px 0 0" class="text-muted">Tes tricots en cours et terminés. Plusieurs projets actifs, c'est permis.</p>
@@ -441,12 +441,12 @@ class App extends Component {
           ${v.detail && html`
             <div>
               <button class="btn btn-ghost" onClick=${v.cancelEdit} style="margin-bottom:14px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Tous les projets</button>
-              <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:28px;align-items:start">
+              <div class="detail-grid" style="display:grid;grid-template-columns:1.35fr 1fr;gap:28px;align-items:start">
 
                 <div style="display:flex;flex-direction:column;gap:20px">
                   <input class="input" value=${v.detail.name} onInput=${v.setName} placeholder="Nom du projet" style="font-family:var(--font-heading);font-size:26px;height:auto;padding:12px 18px;border-radius:18px"/>
 
-                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+                  <div class="grid-3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
                     <div class="field"><label>Taille</label><input class="input" value=${v.detail.size} onInput=${v.setSize} placeholder="M"/></div>
                     <div class="field"><label>Gauge (m. / 10 cm)</label><input class="input" type="number" value=${v.detail.gauge} onInput=${v.setGauge} placeholder="22"/></div>
                     <div class="field"><label>Aiguilles (mm)</label><input class="input" type="number" step="0.5" value=${v.detail.needle} onInput=${v.setNeedle} placeholder="4"/></div>
@@ -464,7 +464,7 @@ class App extends Component {
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><h4 style="margin:0;font-size:18px">Laine associée</h4><span style="font-size:12px" class="text-muted">${v.detail.totalGrams} g au total</span></div>
                     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
                       ${v.detail.allocRows.map(a=>html`
-                        <div style="display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-radius:16px;background:var(--color-surface)">
+                        <div class="alloc-row" style="display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-radius:16px;background:var(--color-surface)">
                           <span style=${a.dot}></span>
                           <div><div style="font-weight:600;font-size:14px">${a.label}</div><div style="font-size:11px" class="text-muted">Dispo restant : ${a.avail} g</div></div>
                           <input class="input" type="number" value=${a.grams} onInput=${a.setGrams} style="width:92px;text-align:right"/>
@@ -472,7 +472,7 @@ class App extends Component {
                           <button class="btn btn-icon btn-ghost" onClick=${a.remove}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
                         </div>`)}
                     </div>
-                    <div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding:12px 14px;border-radius:16px;border:1px dashed var(--color-accent-2)">
+                    <div class="alloc-add" style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding:12px 14px;border-radius:16px;border:1px dashed var(--color-accent-2)">
                       <div class="field" style="margin:0"><label>Depuis le stash</label>
                         <select class="input" value=${v.detail.pickId} onChange=${v.setPickId}>
                           <option value="">Choisir une laine…</option>
@@ -488,7 +488,7 @@ class App extends Component {
                   <div class="field"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
                 </div>
 
-                <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
+                <div class="detail-side" style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
                   <div style="border-radius:22px;background:var(--color-surface);padding:18px">
                     <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:12px">Aperçu du patron</div>
                     ${v.detail.hasPatternImg && v.detail.patternImgEl}
@@ -517,7 +517,7 @@ class App extends Component {
 
         <section style=${v.profilShow}>
           <h1 style="margin:0 0 22px;font-size:36px">Profil</h1>
-          <div style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
+          <div class="profil-grid" style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
             <div style="border-radius:26px;background:var(--color-surface);padding:26px;text-align:center;box-shadow:var(--shadow-sm)">
               <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">L</div>
               <div style="font-family:var(--font-heading);font-size:24px">Louise</div>
@@ -526,7 +526,7 @@ class App extends Component {
             </div>
 
             <div style="display:flex;flex-direction:column;gap:22px">
-              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+              <div class="profil-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
                 <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px;color:var(--color-accent)">${v.profOwned}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Grammes en réserve</div></div>
                 <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profYarns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Laines · ${v.profColorways} coloris</div></div>
                 <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profPatterns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Patrons en bibliothèque</div></div>
