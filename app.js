@@ -26,7 +26,7 @@ class App extends Component {
       editingCw:null, cwEditDraft:null, cwEditOrigPhoto:'',
       manageBrands:false, newBrand:'',
       editingProject:null, projectDraft:null, projectDraftInitial:null,
-      allocPick:{colorwayId:'',grams:''}, needlePick:'',
+      allocPick:{colorwayId:'',grams:''}, needlePick:'', patternPick:'', previewPatternId:null,
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
       tagPrompt:null,         // {kind:'category'|'author', value}
       // ---- needle stash ----
@@ -56,6 +56,36 @@ class App extends Component {
 
   // Bouton « + <texte> » en pointillé.
   addBtn(label,onClick,extraStyle){ return html`<button class="btn-add" style=${extraStyle||''} onClick=${onClick}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${label}</button>`; }
+  // Variante « + <texte> » en pointillé pour déclencher un input file (ex. ajout de photo).
+  addFileBtn(label,onChange,extraStyle){ return html`<label class="btn-add" style=${'cursor:pointer;'+(extraStyle||'')}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${label}<input type="file" accept="image/*" onChange=${onChange} style="display:none"/></label>`; }
+
+  // ---- markdown minimal fait main (gras, italique, titres, listes) ----
+  mdInline(text){ const parts=[]; let rest=text; let key=0;
+    const re=/(\*\*([^*]+)\*\*)|(\*([^*]+)\*)/;
+    while(rest.length){
+      const m=re.exec(rest);
+      if(!m){ parts.push(rest); break; }
+      if(m.index>0) parts.push(rest.slice(0,m.index));
+      if(m[1]!==undefined) parts.push(h('strong',{key:key++},m[2]));
+      else parts.push(h('em',{key:key++},m[4]));
+      rest=rest.slice(m.index+m[0].length);
+    }
+    return parts; }
+  renderMarkdown(text){ if(!text||!text.trim()) return null;
+    const blocks=[]; let listBuf=null; let key=0;
+    const flushList=()=>{ if(listBuf){ blocks.push(h('ul',{key:key++,style:'margin:0 0 10px 18px;padding:0'},listBuf.map((li,i)=>h('li',{key:i,style:'margin-bottom:4px'},this.mdInline(li))))); listBuf=null; } };
+    text.split('\n').forEach(line=>{
+      const l=line.trim();
+      if(l===''){ flushList(); return; }
+      const m3=/^###\s+(.*)/.exec(l), m2=/^##\s+(.*)/.exec(l), m1=/^#\s+(.*)/.exec(l), li=/^[-*]\s+(.*)/.exec(l);
+      if(m3){ flushList(); blocks.push(h('div',{key:key++,style:'font-family:var(--font-heading);font-size:14px;margin:10px 0 4px'},this.mdInline(m3[1]))); }
+      else if(m2){ flushList(); blocks.push(h('div',{key:key++,style:'font-family:var(--font-heading);font-size:16px;margin:12px 0 6px'},this.mdInline(m2[1]))); }
+      else if(m1){ flushList(); blocks.push(h('div',{key:key++,style:'font-family:var(--font-heading);font-size:19px;margin:14px 0 8px'},this.mdInline(m1[1]))); }
+      else if(li){ if(!listBuf) listBuf=[]; listBuf.push(li[1]); }
+      else { flushList(); blocks.push(h('div',{key:key++,style:'margin-bottom:6px;line-height:1.5'},this.mdInline(l))); }
+    });
+    flushList();
+    return blocks; }
 
   // Rond de couleur plein cliquable (ouvre le sélecteur natif au clic).
   // Si `photoUrl`, une photo circulaire recouvre le rond en aperçu (la couleur
@@ -188,7 +218,7 @@ class App extends Component {
     const [yq,pq,prq,nq]=await Promise.all([
       supabase.from('yarns').select('*, colorways(*)').order('created_at',{ascending:false}),
       supabase.from('patterns').select('*').order('created_at',{ascending:false}),
-      supabase.from('projects').select('*, project_allocations(*), project_photos(*), project_needles(*)').order('created_at',{ascending:false}),
+      supabase.from('projects').select('*, project_allocations(*), project_photos(*), project_needles(*), project_patterns(*)').order('created_at',{ascending:false}),
       supabase.from('needles').select('*').order('created_at',{ascending:false}),
     ]);
     const stash=(yq.data||[]).map(y=>({id:y.id,brand:y.brand,name:y.name,mps:Number(y.meters_per_skein)||0,gps:Number(y.grams_per_skein)||0,blend:y.blend,
@@ -196,11 +226,12 @@ class App extends Component {
         .map(c=>({id:c.id,color:c.color,hex:c.hex,dyeLot:c.dye_lot,grams:Number(c.grams)||0,photo:c.photo_path||''}))}));
     const patterns=(pq.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,author:p.author,path:p.file_path||'',fileName:p.file_name||'',kind:p.file_kind||''}));
     const needles=(nq.data||[]).map(n=>({id:n.id,brand:n.brand||'',size:n.size_mm===null?'':String(n.size_mm),length:n.length||'',interchangeable:!!n.interchangeable}));
-    const projects=(prq.data||[]).map(pr=>({id:pr.id,name:pr.name,patternId:pr.pattern_id,size:pr.size,
-      gauge:pr.gauge===null?'':String(pr.gauge), needle:pr.needle_size===null?'':String(pr.needle_size),
+    const projects=(prq.data||[]).map(pr=>({id:pr.id,name:pr.name,size:pr.size,
+      gauge:pr.gauge===null?'':String(pr.gauge),
       startDate:pr.start_date,endDate:pr.end_date,notes:pr.notes,
       allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
       needleLinks:(pr.project_needles||[]).map(pn=>({rowId:pn.id,needleId:pn.needle_id})),
+      patternLinks:(pr.project_patterns||[]).map(pp=>({rowId:pp.id,patternId:pp.pattern_id})),
       photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
     this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns,stash)});
     this._loadingData=false;
@@ -502,15 +533,35 @@ class App extends Component {
     if(d.id && l.rowId) await supabase.from('project_needles').delete().eq('id',l.rowId);
     this.setState(s=>({projectDraft:{...s.projectDraft,needleLinks:s.projectDraft.needleLinks.filter((x,idx)=>idx!==i)}})); };
 
+  // ---- association patron(s) <-> projet ----
+  setPatternPick=(e)=>this.setState({patternPick:e.target.value});
+  addProjectPattern=async()=>{ const pid=this.state.patternPick; if(!pid) return;
+    const d=this.state.projectDraft;
+    if((d.patternLinks||[]).some(l=>l.patternId===pid)){ this.setState({patternPick:''}); return; }
+    let rowId=null;
+    if(d.id){ const uid=this.state.session.user.id;
+      const {data}=await supabase.from('project_patterns').insert({user_id:uid,project_id:d.id,pattern_id:pid}).select().single();
+      rowId=data?data.id:null;
+    }
+    this.ensurePatternUrl(pid);
+    this.setState(s=>({projectDraft:{...s.projectDraft,patternLinks:[...(s.projectDraft.patternLinks||[]),{rowId,patternId:pid}]},patternPick:'',previewPatternId:pid})); };
+  removeProjectPattern=(i)=>async()=>{ const d=this.state.projectDraft; const l=d.patternLinks[i];
+    if(d.id && l.rowId) await supabase.from('project_patterns').delete().eq('id',l.rowId);
+    this.setState(s=>{ const patternLinks=s.projectDraft.patternLinks.filter((x,idx)=>idx!==i);
+      const preview=s.previewPatternId===l.patternId?(patternLinks[0]?patternLinks[0].patternId:null):s.previewPatternId;
+      return {projectDraft:{...s.projectDraft,patternLinks},previewPatternId:preview}; }); };
+  setPreviewPattern=(id)=>()=>this.setState({previewPatternId:id});
+
   // ---- projects ----
-  newProject=()=>{ const draft={id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],needleLinks:[],photos:[]};
-    this.setState({zone:'projects',editingProject:'new',projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''},needlePick:''}); };
+  newProject=()=>{ const draft={id:null,name:'',size:'',gauge:'',startDate:this.today(),endDate:null,notes:'',allocations:[],needleLinks:[],patternLinks:[],photos:[]};
+    this.setState({zone:'projects',editingProject:'new',projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''},needlePick:'',patternPick:'',previewPatternId:null}); };
   editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); const draft=this.dedupeAllocs(JSON.parse(JSON.stringify(p)));
-    this.setState({zone:'projects',editingProject:id,projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''}});
-    this.ensurePatternUrl(draft.patternId); };
+    const firstPatternId=(draft.patternLinks&&draft.patternLinks[0])?draft.patternLinks[0].patternId:null;
+    this.setState({zone:'projects',editingProject:id,projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''},patternPick:'',previewPatternId:firstPatternId});
+    (draft.patternLinks||[]).forEach(l=>this.ensurePatternUrl(l.patternId)); };
   cancelEdit=()=>{ const d=this.state.projectDraft;
     if(d && !d.id && d.photos.length) d.photos.forEach(ph=>supabase.storage.from('photos').remove([ph.path]));
-    this.setState({editingProject:null,projectDraft:null,projectDraftInitial:null}); };
+    this.setState({editingProject:null,projectDraft:null,projectDraftInitial:null,previewPatternId:null}); };
   ensurePatternUrl=async(patternId)=>{ if(!patternId) return; const p=this.state.patterns.find(x=>x.id===patternId);
     if(!p||!p.path||this.state.signedUrls[p.path]) return;
     const url=await this.getSignedUrl('patterns',p.path);
@@ -518,8 +569,8 @@ class App extends Component {
   setPD=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,[f]:v}})); };
   saveProject=async()=>{ const d=this.state.projectDraft; if(!d.name.trim()) return;
     const uid=this.state.session.user.id;
-    const cols={user_id:uid,name:d.name.trim(),pattern_id:d.patternId||null,size:d.size,
-      gauge:d.gauge===''?null:Number(d.gauge),needle_size:d.needle===''?null:Number(d.needle),
+    const cols={user_id:uid,name:d.name.trim(),size:d.size,
+      gauge:d.gauge===''?null:Number(d.gauge),
       start_date:d.startDate||null,end_date:d.endDate||null,notes:d.notes};
     if(d.id){
       await supabase.from('projects').update(cols).eq('id',d.id);
@@ -545,7 +596,13 @@ class App extends Component {
           .insert(needleLinks.map(l=>({user_id:uid,project_id:row.id,needle_id:l.needleId}))).select();
         if(nRows) needleLinks=nRows.map(pn=>({rowId:pn.id,needleId:pn.needle_id}));
       }
-      const project={...d,id:row.id,allocations,photos,needleLinks};
+      let patternLinks=d.patternLinks||[];
+      if(patternLinks.length){
+        const {data:pRows}=await supabase.from('project_patterns')
+          .insert(patternLinks.map(l=>({user_id:uid,project_id:row.id,pattern_id:l.patternId}))).select();
+        if(pRows) patternLinks=pRows.map(pp=>({rowId:pp.id,patternId:pp.pattern_id}));
+      }
+      const project={...d,id:row.id,allocations,photos,needleLinks,patternLinks};
       this.setState(s=>({projects:[project,...s.projects],editingProject:null,projectDraft:null}));
     }
   };
@@ -562,7 +619,6 @@ class App extends Component {
       await supabase.from('projects').delete().eq('id',id);
     }
     this.setState(s=>({projects:s.projects.filter(p=>p.id!==id),editingProject:null,projectDraft:null})); };
-  setProjectPattern=(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,patternId:v}})); this.ensurePatternUrl(v); };
   dedupeAllocs(draft){
     const seen={}; const merged=[]; const toDelete=[];
     (draft.allocations||[]).forEach(a=>{
@@ -619,7 +675,9 @@ class App extends Component {
 
   renderVals(){
     const st=this.state, map=this.cwMap();
-    const patName=(id)=>{ const p=st.patterns.find(x=>x.id===id); return p?p.name:'Sans patron'; };
+    const patName=(p)=>{ const links=p.patternLinks||[]; if(!links.length) return 'Sans patron';
+      const pat=st.patterns.find(x=>x.id===links[0].patternId); const extra=links.length>1?` +${links.length-1}`:'';
+      return pat?`${pat.name}${extra}`:'Sans patron'; };
     const projGrams=(p)=>p.allocations.reduce((s,a)=>s+(Number(a.grams)||0),0);
     const projMeters=(p)=>p.allocations.reduce((s,a)=>{ const e=map[a.colorwayId]; return e&&e.yarn.gps? s+(a.grams/e.yarn.gps)*e.yarn.mps:s; },0);
     const projSkeins=(p)=>p.allocations.reduce((s,a)=>{ const e=map[a.colorwayId]; return e&&e.yarn.gps? s+(a.grams/e.yarn.gps):s; },0);
@@ -632,7 +690,7 @@ class App extends Component {
     const yarnDot=(p)=>{ const e=p.allocations[0]&&map[p.allocations[0].colorwayId]; return `width:11px;height:11px;border-radius:50%;flex:none;background:${e?e.cw.hex:'var(--color-neutral-400)'}`; };
     const since=(p)=>{ if(!p.startDate) return ''; const d=new Date(p.startDate); return 'depuis '+d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}); };
 
-    const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p.patternId),thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
+    const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p),thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
 
     const stockBucket=(g)=>g<=0?'Épuisé':g<100?'< 100 g':g<300?'100–300 g':g<600?'300–600 g':'600 g +';
     const stashRows=st.stash.filter(y=>
@@ -673,7 +731,7 @@ class App extends Component {
     const manageAuthors=allAuthors.map(a=>({label:a,del:this.deleteAuthor(a)}));
     const libraryFilterBtn=this.renderFilterButton('library',['category','author']);
     const libraryFilterPanel=this.renderFilterPanel('library',[{dim:'category',label:'Catégorie',options:allCats},{dim:'author',label:'Auteur',options:allAuthors}]);
-    const usedIn=(id)=>st.projects.filter(p=>p.patternId===id).length;
+    const usedIn=(id)=>st.projects.filter(p=>(p.patternLinks||[]).some(l=>l.patternId===id)).length;
     const patterns=st.patterns.filter(p=>this.filterPass('library','category',p.category)&&this.filterPass('library','author',p.author)).map(p=>{
       const url=p.kind==='img'&&p.path? st.signedUrls[p.path]:'';
       return {id:p.id,name:p.name,category:p.category,author:p.author||'Sans auteur',isPdf:p.kind==='pdf',
@@ -704,25 +762,34 @@ class App extends Component {
       const options=[]; st.stash.forEach(y=>y.colorways.forEach(cw=>{ const avail=cw.grams-this.allocatedTo(cw.id); options.push({id:cw.id,label:`${y.name} · ${cw.color} — ${avail} g dispo`}); }));
       const photos=d.photos.map((ph,i)=>{ const url=st.signedUrls[ph.path]||'';
         return {remove:this.removePhoto(i), imgEl: url? h('img',{src:url,style:{width:'100%',height:'100%',objectFit:'cover'}}) : h('div',{style:{width:'100%',height:'100%',background:'var(--color-neutral-200)'}})}; });
-      const selP=st.patterns.find(x=>x.id===d.patternId);
+      const needleLinks=(d.needleLinks||[]).map((l,i)=>{ const n=st.needles.find(x=>x.id===l.needleId);
+        return {label:n?this.needleLabel(n):'Aiguille supprimée',interchangeable:!!(n&&n.interchangeable),remove:this.removeProjectNeedle(i)}; });
+      const linkedNeedleIds=new Set((d.needleLinks||[]).map(l=>l.needleId));
+      const needleOptions=st.needles.filter(n=>!linkedNeedleIds.has(n.id)).map(n=>({id:n.id,label:this.needleLabel(n)}));
+
+      const patternLinks=(d.patternLinks||[]).map((l,i)=>{ const pat=st.patterns.find(x=>x.id===l.patternId);
+        return {id:l.patternId,label:pat?pat.name:'Patron supprimé',active:st.previewPatternId===l.patternId,
+          setPreview:this.setPreviewPattern(l.patternId),remove:this.removeProjectPattern(i)}; });
+      const linkedPatternIds=new Set((d.patternLinks||[]).map(l=>l.patternId));
+      const patternOptions=st.patterns.filter(p=>!linkedPatternIds.has(p.id)).map(p=>({id:p.id,label:p.name}));
+      const previewId=st.previewPatternId||((d.patternLinks&&d.patternLinks[0])?d.patternLinks[0].patternId:null);
+      const selP=st.patterns.find(x=>x.id===previewId);
       const patUrl=selP&&selP.path?(st.signedUrls[selP.path]||''):'';
       const patIsImg=!!(selP&&selP.kind==='img');
       const patIsPdf=!!(selP&&selP.kind==='pdf');
       const patImgEl=(patIsImg&&patUrl)?h('img',{src:patUrl,style:{width:'100%',display:'block',borderRadius:'14px'}}):null;
-      const needleLinks=(d.needleLinks||[]).map((l,i)=>{ const n=st.needles.find(x=>x.id===l.needleId);
-        return {label:n?this.needleLabel(n):'Aiguille supprimée',interchangeable:!!(n&&n.interchangeable),remove:this.removeProjectNeedle(i)}; });
-      const linkedIds=new Set((d.needleLinks||[]).map(l=>l.needleId));
-      const needleOptions=st.needles.filter(n=>!linkedIds.has(n.id)).map(n=>({id:n.id,label:this.needleLabel(n)}));
-      detail={id:d.id,isNew:!d.id,name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
-        startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos,
+
+      detail={id:d.id,isNew:!d.id,name:d.name,size:d.size,gauge:d.gauge,
+        startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,notesHtml:this.renderMarkdown(d.notes),photos,
         allocRows,options,pickId:st.allocPick.colorwayId,pickGrams:st.allocPick.grams,
         needleLinks,needleOptions,needlePickId:st.needlePick,hasNeedleStash:st.needles.length>0,
-        patternOptions:st.patterns,hasPattern:!!selP,patternName:selP?selP.name:'',patternMeta:this.patMeta(d.patternId),
+        patternLinks,patternOptions,patternPickId:st.patternPick,hasPatternLibrary:st.patterns.length>0,
+        hasPattern:!!selP,patternName:selP?selP.name:'',patternMeta:this.patMeta(previewId),
         patIsImg,patIsPdf,patUrl,patImgEl,
         totalGrams:projGrams(d)};
     }
 
-    const projectCards=st.projects.map(p=>({id:p.id,name:p.name,patternName:patName(p.patternId),done:!!p.endDate,
+    const projectCards=st.projects.map(p=>({id:p.id,name:p.name,patternName:patName(p),done:!!p.endDate,
       statusLabel:p.endDate?'Terminé':'En cours',statusClass:p.endDate?'tag tag-neutral':'tag tag-accent-2',
       thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),
       dateLabel:p.endDate?('Fini le '+new Date(p.endDate).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})):since(p),
@@ -768,11 +835,12 @@ class App extends Component {
       pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',
       pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.path&&st.signedUrls[st.patternDraft.path])?`background-image:url(${st.signedUrls[st.patternDraft.path]});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
       projectCards,projectsEmpty:st.projects.length===0,detail,
-      setName:this.setPD('name'),setPattern:this.setProjectPattern,setSize:this.setPD('size'),setGauge:this.setPD('gauge'),setNeedle:this.setPD('needle'),
-      setStart:this.setPD('startDate'),setNotes:this.setPD('notes'),
+      setName:this.setPD('name'),setSize:this.setPD('size'),setGauge:this.setPD('gauge'),
+      setStart:this.setPD('startDate'),setEnd:this.setPD('endDate'),setNotes:this.setPD('notes'),
       cancelEdit:this.cancelEdit,saveProject:this.saveProject,finishProject:this.finishProject,reopenProject:this.reopenProject,deleteProject:this.deleteProject,
       setPickId:this.setAllocPick('colorwayId'),setPickGrams:this.setAllocPick('grams'),addAlloc:this.addAlloc,
       setNeedlePick:this.setNeedlePick,addProjectNeedle:this.addProjectNeedle,
+      setPatternPick:this.setPatternPick,addProjectPattern:this.addProjectPattern,
       onProjectPhoto:this.onProjectPhoto,
       pendingNav:st.pendingNav,confirmNavSave:this.confirmNavSave,confirmNavDiscard:this.confirmNavDiscard,cancelNav:this.cancelNav,
       confirm:st.confirm,confirmYes:this.confirmYes,confirmNo:this.confirmNo,
@@ -1139,64 +1207,43 @@ class App extends Component {
 
               <div class="detail-sections" style="display:flex;flex-direction:column;gap:20px">
 
-                <!-- Section 1 · Infos -->
+                <!-- Section 1 · Informations -->
                 <div style="border-radius:22px;background:var(--color-surface);padding:20px">
                   <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Informations</div>
-                  <div class="grid-3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+                  <div class="grid-4" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px">
                     <div class="field"><label>Taille</label><input class="input" value=${v.detail.size} onInput=${v.setSize} placeholder="M"/></div>
                     <div class="field"><label>Gauge (m. / 10 cm)</label><input class="input" type="number" value=${v.detail.gauge} onInput=${v.setGauge} placeholder="22"/></div>
-                    <div class="field"><label>Aiguilles (mm)</label><input class="input" type="number" step="0.5" value=${v.detail.needle} onInput=${v.setNeedle} placeholder="4"/></div>
                     <div class="field"><label>Date de début</label><input class="input" type="date" value=${v.detail.startDate} onInput=${v.setStart}/></div>
-                    <div class="field" style="grid-column:span 2"><label>Statut</label><input class="input" value=${v.detail.done?'Terminé':'En cours'} disabled style="opacity:.7"/></div>
+                    <div class="field"><label>Date de fin</label><input class="input" type="date" value=${v.detail.endDate||''} onInput=${v.setEnd}/></div>
                   </div>
-                  <div class="field" style="margin-top:14px"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
-
-                  <div style="margin-top:16px;border-top:1px solid var(--color-divider);padding-top:14px">
-                    <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 70%,transparent);margin-bottom:10px">Aiguilles associées</div>
-                    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
-                      ${v.detail.needleLinks.map(n=>html`
-                        <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:14px;background:var(--color-bg)">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M4 20 20 4"/><path d="M14 10l4-4"/></svg>
-                          <div style="flex:1;min-width:0;font-size:13.5px;font-weight:600">${n.label}</div>
-                          ${n.interchangeable && html`<span class="tag tag-accent-2">Interch.</span>`}
-                          <button class="btn btn-icon btn-ghost" style="width:28px;height:28px" onClick=${n.remove}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-                        </div>`)}
-                      ${v.detail.needleLinks.length===0 && html`<div class="text-muted" style="font-size:13px">Aucune aiguille associée.</div>`}
-                    </div>
-                    ${v.detail.hasNeedleStash && html`
-                      <div style="display:flex;gap:10px;align-items:flex-end">
-                        <div class="field" style="margin:0;flex:1"><label>Depuis le stash d'aiguilles</label>
-                          <select class="input" value=${v.detail.needlePickId} onChange=${v.setNeedlePick}>
-                            <option value="">Choisir une aiguille…</option>
-                            ${v.detail.needleOptions.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
-                          </select>
-                        </div>
-                        <button class="btn btn-secondary" onClick=${v.addProjectNeedle}>Associer</button>
-                      </div>`}
-                    ${!v.detail.hasNeedleStash && html`<div class="text-muted" style="font-size:11.5px">Ajoute des aiguilles dans l'onglet « Aiguilles » pour pouvoir les associer.</div>`}
-                  </div>
+                  <div class="field" style="margin-top:14px"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques… (markdown : **gras**, *italique*, # titre, - liste)" style="min-height:100px"></textarea></div>
+                  ${v.detail.notesHtml && html`<div style="margin-top:10px;padding:12px 16px;border-radius:16px;background:var(--color-bg);font-size:13.5px">${v.detail.notesHtml}</div>`}
                 </div>
 
-                <!-- Section 2 · Patron -->
+                <!-- Section 2 · Aiguilles -->
                 <div style="border-radius:22px;background:var(--color-surface);padding:20px">
-                  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Patron</div>
-                  <div class="pattern-sec" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
-                    <div>
-                      <div class="field"><label>Choix du patron</label>
-                        <select class="input" value=${v.detail.patternId} onChange=${v.setPattern}>
-                          <option value="">Aucun patron</option>
-                          ${v.detail.patternOptions.map(po=>html`<option value=${po.id}>${po.name}</option>`)}
+                  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Aiguilles associées</div>
+                  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+                    ${v.detail.needleLinks.map(n=>html`
+                      <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:14px;background:var(--color-bg)">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M4 20 20 4"/><path d="M14 10l4-4"/></svg>
+                        <div style="flex:1;min-width:0;font-size:13.5px;font-weight:600">${n.label}</div>
+                        ${n.interchangeable && html`<span class="tag tag-accent-2">Interch.</span>`}
+                        <button class="btn btn-icon btn-ghost" style="width:28px;height:28px" onClick=${n.remove}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                      </div>`)}
+                    ${v.detail.needleLinks.length===0 && html`<div class="text-muted" style="font-size:13px">Aucune aiguille associée.</div>`}
+                  </div>
+                  ${v.detail.hasNeedleStash && html`
+                    <div style="display:flex;gap:10px;align-items:flex-end">
+                      <div class="field" style="margin:0;flex:1"><label>Depuis le stash d'aiguilles</label>
+                        <select class="input" value=${v.detail.needlePickId} onChange=${v.setNeedlePick}>
+                          <option value="">Choisir une aiguille…</option>
+                          ${v.detail.needleOptions.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
                         </select>
                       </div>
-                      ${v.detail.hasPattern && html`<div style="font-size:13px;margin-top:12px" class="text-muted">${v.detail.patternMeta}</div>`}
-                    </div>
-                    <div>
-                      <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent-2-700);margin-bottom:8px">Aperçu</div>
-                      ${v.detail.patIsImg && v.detail.patUrl && html`<div class="washed" style="border-radius:14px;overflow:hidden">${v.detail.patImgEl}</div>`}
-                      ${v.detail.patIsPdf && html`<a href=${v.detail.patUrl} target="_blank" rel="noopener" style="text-decoration:none"><div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span style="font-size:12px;font-weight:600">Ouvrir le PDF</span></div></a>`}
-                      ${(!v.detail.patIsImg||!v.detail.patUrl) && !v.detail.patIsPdf && html`<div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;align-items:center;justify-content:center;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg></div>`}
-                    </div>
-                  </div>
+                      ${this.addBtn('Associer',v.addProjectNeedle)}
+                    </div>`}
+                  ${!v.detail.hasNeedleStash && html`<div class="text-muted" style="font-size:11.5px">Ajoute des aiguilles dans l'onglet « Aiguilles » pour pouvoir les associer.</div>`}
                 </div>
 
                 <!-- Section 3 · Laines associées -->
@@ -1221,14 +1268,50 @@ class App extends Component {
                       </select>
                     </div>
                     <div class="field" style="margin:0;width:110px"><label>Grammes</label><input class="input" type="number" value=${v.detail.pickGrams} onInput=${v.setPickGrams} placeholder="200"/></div>
-                    <button class="btn btn-secondary" onClick=${v.addAlloc}>Associer</button>
+                    ${this.addBtn('Associer',v.addAlloc)}
                   </div>
                   <p style="font-size:11.5px;margin:8px 2px 0" class="text-muted">Une même laine associée deux fois est fusionnée. Les grammes utilisés sont déduits du stash.</p>
                 </div>
 
-                <!-- Section 4 · Photos -->
+                <!-- Section 4 · Patron(s) -->
                 <div style="border-radius:22px;background:var(--color-surface);padding:20px">
-                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div><label class="btn btn-ghost" style="cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter<input type="file" accept="image/*" onChange=${v.onProjectPhoto}/></label></div>
+                  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Patron</div>
+                  <div class="pattern-sec" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
+                    <div>
+                      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+                        ${v.detail.patternLinks.map(pl=>html`
+                          <div onClick=${pl.setPreview} style=${'display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:14px;cursor:pointer;background:'+(pl.active?'var(--color-accent-200)':'var(--color-bg)')}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg>
+                            <div style="flex:1;min-width:0;font-size:13.5px;font-weight:600">${pl.label}</div>
+                            <button class="btn btn-icon btn-ghost" style="width:28px;height:28px" onClick=${(e)=>{e.stopPropagation();pl.remove(e);}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                          </div>`)}
+                        ${v.detail.patternLinks.length===0 && html`<div class="text-muted" style="font-size:13px">Aucun patron associé.</div>`}
+                      </div>
+                      ${v.detail.hasPatternLibrary && html`
+                        <div style="display:flex;gap:10px;align-items:flex-end">
+                          <div class="field" style="margin:0;flex:1"><label>Depuis la bibliothèque</label>
+                            <select class="input" value=${v.detail.patternPickId} onChange=${v.setPatternPick}>
+                              <option value="">Choisir un patron…</option>
+                              ${v.detail.patternOptions.map(po=>html`<option value=${po.id}>${po.label}</option>`)}
+                            </select>
+                          </div>
+                          ${this.addBtn('Associer',v.addProjectPattern)}
+                        </div>`}
+                      ${!v.detail.hasPatternLibrary && html`<div class="text-muted" style="font-size:11.5px">Ajoute des patrons dans la Bibliothèque pour pouvoir les associer.</div>`}
+                      ${v.detail.hasPattern && html`<div style="font-size:13px;margin-top:12px" class="text-muted">${v.detail.patternMeta}</div>`}
+                    </div>
+                    <div>
+                      <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent-2-700);margin-bottom:8px">Aperçu</div>
+                      ${v.detail.patIsImg && v.detail.patUrl && html`<div class="washed" style="border-radius:14px;overflow:hidden">${v.detail.patImgEl}</div>`}
+                      ${v.detail.patIsPdf && html`<a href=${v.detail.patUrl} target="_blank" rel="noopener" style="text-decoration:none"><div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span style="font-size:12px;font-weight:600">Ouvrir le PDF</span></div></a>`}
+                      ${(!v.detail.patIsImg||!v.detail.patUrl) && !v.detail.patIsPdf && html`<div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;align-items:center;justify-content:center;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg></div>`}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Section 5 · Photos -->
+                <div style="border-radius:22px;background:var(--color-surface);padding:20px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div>${this.addFileBtn('Ajouter',v.onProjectPhoto)}</div>
                   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
                     ${v.detail.photos.map(ph=>html`
                       <div style="position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1">${ph.imgEl}<button onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button></div>`)}
