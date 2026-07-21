@@ -22,8 +22,8 @@ class App extends Component {
       zone:'home',
       expandedYarn:null,
       yarnDialog:false, yarnDraft:this.blankYarn(), yarnEditId:null,
-      cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
-      editingCw:null, cwEditDraft:null,
+      cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:'',photo:''}, cwFor:null,
+      editingCw:null, cwEditDraft:null, cwEditOrigPhoto:'',
       manageBrands:false, newBrand:'',
       editingProject:null, projectDraft:null, projectDraftInitial:null,
       allocPick:{colorwayId:'',grams:''}, needlePick:'',
@@ -43,7 +43,7 @@ class App extends Component {
     };
     this._loadingData=false;
   }
-  blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:''}; }
+  blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:'',photo:''}; }
   blankPattern(){ return {name:'',category:'Pull',author:'',path:'',fileName:'',kind:''}; }
   blankNeedle(){ return {brand:'',size:'',length:'',interchangeable:false}; }
   standardSizes(){ return [2,2.25,2.5,2.75,3,3.25,3.5,3.75,4,4.5,5,5.5,6,6.5,7,8,9,10,12,15,20].map(String); }
@@ -57,10 +57,27 @@ class App extends Component {
   addBtn(label,onClick,extraStyle){ return html`<button class="btn-add" style=${extraStyle||''} onClick=${onClick}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${label}</button>`; }
 
   // Rond de couleur plein cliquable (ouvre le sélecteur natif au clic).
-  colorDot(hex,onChange,size){ const s=size||34;
+  // Si `photoUrl`, une photo circulaire recouvre le rond en aperçu (la couleur
+  // reste éditable en dessous : l'overlay laisse passer les clics).
+  colorDot(hex,onChange,size,photoUrl){ const s=size||34;
     return html`<label style="display:inline-block;position:relative;width:${s}px;height:${s}px;border-radius:50%;background:${hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12);cursor:pointer;flex:none">
       <input type="color" value=${hex} onInput=${onChange} style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:none;padding:0"/>
+      ${photoUrl?html`<span style=${`position:absolute;inset:0;border-radius:50%;background-image:url(${photoUrl});background-size:cover;background-position:center;box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12);pointer-events:none`}></span>`:null}
     </label>`; }
+
+  // Bloc « Couleur + photo » d'un coloris : rond de couleur (avec aperçu photo
+  // en overlay si présent) + bouton d'ajout/remplacement + suppression de photo.
+  cwColorPhoto(hex,onHex,photo,photoUrl,onPhoto,onRemove){
+    return html`<div style="display:flex;align-items:center;gap:8px">
+      ${this.colorDot(hex,onHex,44,photoUrl)}
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <label class="btn btn-icon btn-secondary" style="width:28px;height:28px;cursor:pointer;padding:0" title=${photo?'Remplacer la photo':'Ajouter une photo'}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <input type="file" accept="image/*" onChange=${onPhoto} style="display:none"/>
+        </label>
+        ${photo?html`<button class="btn btn-icon btn-ghost" style="width:28px;height:28px" onClick=${onRemove} title="Retirer la photo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`:null}
+      </div>
+    </div>`; }
 
   // Toggle segmenté (N options), le pouce glisse sous l'option active.
   segToggle(options,value,onChange,width){ const n=options.length; const idx=Math.max(0,options.findIndex(o=>o.value===value));
@@ -175,7 +192,7 @@ class App extends Component {
     ]);
     const stash=(yq.data||[]).map(y=>({id:y.id,brand:y.brand,name:y.name,mps:Number(y.meters_per_skein)||0,gps:Number(y.grams_per_skein)||0,blend:y.blend,
       colorways:(y.colorways||[]).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at))
-        .map(c=>({id:c.id,color:c.color,hex:c.hex,dyeLot:c.dye_lot,grams:Number(c.grams)||0}))}));
+        .map(c=>({id:c.id,color:c.color,hex:c.hex,dyeLot:c.dye_lot,grams:Number(c.grams)||0,photo:c.photo_path||''}))}));
     const patterns=(pq.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,author:p.author,path:p.file_path||'',fileName:p.file_name||'',kind:p.file_kind||''}));
     const needles=(nq.data||[]).map(n=>({id:n.id,brand:n.brand||'',size:n.size_mm===null?'':String(n.size_mm),length:n.length||'',interchangeable:!!n.interchangeable}));
     const projects=(prq.data||[]).map(pr=>({id:pr.id,name:pr.name,patternId:pr.pattern_id,size:pr.size,
@@ -214,6 +231,7 @@ class App extends Component {
     const photoPaths=[...new Set([
       ...this.state.projects.flatMap(p=>p.photos.map(ph=>ph.path)),
       ...(this.state.projectDraft? this.state.projectDraft.photos.map(ph=>ph.path):[]),
+      ...this.state.stash.flatMap(y=>y.colorways.map(c=>c.photo).filter(Boolean)),
     ])];
     const updates={};
     if(patternPaths.length){ const {data}=await supabase.storage.from('patterns').createSignedUrls(patternPaths,3600); (data||[]).forEach(d=>{ if(d.signedUrl) updates[d.path]=d.signedUrl; }); }
@@ -258,7 +276,8 @@ class App extends Component {
   openYarnAdd=()=>this.setState({yarnDialog:true,yarnEditId:null,yarnDraft:this.blankYarn()});
   openYarnEdit=(id)=>(e)=>{ e&&e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id); if(!y) return;
     this.setState({yarnDialog:true,yarnEditId:id,yarnDraft:{...this.blankYarn(),brand:y.brand,name:y.name,mps:String(y.mps||''),gps:String(y.gps||''),blend:y.blend||''}}); };
-  closeYarnDialog=()=>this.setState({yarnDialog:false,yarnEditId:null});
+  closeYarnDialog=()=>{ const p=this.state.yarnDraft.photo; if(p) supabase.storage.from('photos').remove([p]);
+    this.setState({yarnDialog:false,yarnEditId:null}); };
   setYarnDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,[f]:v}})); };
   setYarnDraftHex=(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,hex:v}})); };
   saveYarn=async()=>{
@@ -276,9 +295,10 @@ class App extends Component {
       const {data:yarnRow}=await supabase.from('yarns').insert({user_id:uid,...cols}).select().single();
       if(!yarnRow) return;
       const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yarnRow.id,
-        color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
+        color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0,photo_path:d.photo||null}).select().single();
       const yarn={id:yarnRow.id,brand:yarnRow.brand,name:yarnRow.name,mps:Number(yarnRow.meters_per_skein)||0,gps:Number(yarnRow.grams_per_skein)||0,blend:yarnRow.blend,
-        colorways:cwRow?[{id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0}]:[]};
+        colorways:cwRow?[{id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0,photo:cwRow.photo_path||''}]:[]};
+      if(d.photo) this.refreshSignedUrls();
       this.setState(s=>({stash:[yarn,...s.stash],yarnDialog:false,yarnDraft:this.blankYarn(),expandedYarn:yarn.id}));
     }
   };
@@ -290,29 +310,55 @@ class App extends Component {
     this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
   setCwGrams=(yid,cid)=>async(e)=>{ const v=Number(e.target.value)||0; await supabase.from('colorways').update({grams:v}).eq('id',cid);
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
-  startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}});
-  cancelCw=()=>this.setState({cwFor:null});
+  startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:'',photo:''}});
+  cancelCw=()=>{ const p=this.state.cwDraft.photo; if(p) supabase.storage.from('photos').remove([p]);
+    this.setState({cwFor:null}); };
   setCwDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwDraft:{...s.cwDraft,[f]:v}})); };
   addCw=(yid)=>async()=>{ const d=this.state.cwDraft; if(!d.color.trim()) return;
     const uid=this.state.session.user.id;
-    const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yid,color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
+    const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yid,color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0,photo_path:d.photo||null}).select().single();
     if(!cwRow) return;
-    const cw={id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0};
+    const cw={id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0,photo:cwRow.photo_path||''};
+    if(cw.photo) this.refreshSignedUrls();
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:[...y.colorways,cw]}),cwFor:null})); };
   deleteCw=(yid,cid)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid);
     this.askConfirm({title:'Supprimer le coloris ?',message:`« ${cw?cw.color:'Ce coloris'} » sera définitivement supprimé.`,
       onConfirm:()=>this._deleteCw(yid,cid)}); };
-  _deleteCw=async(yid,cid)=>{ await supabase.from('colorways').delete().eq('id',cid);
+  _deleteCw=async(yid,cid)=>{ const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid);
+    if(cw&&cw.photo) supabase.storage.from('photos').remove([cw.photo]);
+    await supabase.from('colorways').delete().eq('id',cid);
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
   startEditCw=(yid,cid)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid); if(!cw) return;
-    this.setState({editingCw:cid,cwEditDraft:{color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:String(cw.grams)}}); };
-  cancelEditCw=()=>this.setState({editingCw:null,cwEditDraft:null});
+    this.setState({editingCw:cid,cwEditDraft:{color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:String(cw.grams),photo:cw.photo||''},cwEditOrigPhoto:cw.photo||''}); };
+  cancelEditCw=()=>{ const d=this.state.cwEditDraft,orig=this.state.cwEditOrigPhoto;
+    if(d&&d.photo&&d.photo!==orig) supabase.storage.from('photos').remove([d.photo]);
+    this.setState({editingCw:null,cwEditDraft:null,cwEditOrigPhoto:''}); };
   setCwEditDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwEditDraft:{...s.cwEditDraft,[f]:v}})); };
   setCwEditHex=(e)=>{ const v=e.target.value; this.setState(s=>({cwEditDraft:{...s.cwEditDraft,hex:v}})); };
-  saveEditCw=(yid,cid)=>async()=>{ const d=this.state.cwEditDraft; if(!d||!d.color.trim()) return;
-    const cols={color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0};
+  saveEditCw=(yid,cid)=>async()=>{ const d=this.state.cwEditDraft; if(!d||!d.color.trim()) return; const orig=this.state.cwEditOrigPhoto;
+    const cols={color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0,photo_path:d.photo||null};
     await supabase.from('colorways').update(cols).eq('id',cid);
-    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,color:cols.color,hex:cols.hex,dyeLot:cols.dye_lot,grams:cols.grams})}),editingCw:null,cwEditDraft:null})); };
+    if(orig && orig!==d.photo) supabase.storage.from('photos').remove([orig]);
+    if(d.photo) this.refreshSignedUrls();
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,color:cols.color,hex:cols.hex,dyeLot:cols.dye_lot,grams:cols.grams,photo:d.photo||''})}),editingCw:null,cwEditDraft:null,cwEditOrigPhoto:''})); };
+  // upload / suppression de la photo d'un coloris (bucket `photos`, réutilisé)
+  // `which` ∈ {'yarn','add','edit'} → yarnDraft | cwDraft | cwEditDraft
+  cwPhotoDraftKey(which){ return which==='yarn'?'yarnDraft':which==='add'?'cwDraft':'cwEditDraft'; }
+  onCwPhoto=(which)=>async(e)=>{ const file=e.target.files[0]; e.target.value=''; if(!file||!file.type.startsWith('image')) return;
+    const key=this.cwPhotoDraftKey(which); const prev=this.state[key]&&this.state[key].photo;
+    const path=this.storagePath(file);
+    const {error}=await supabase.storage.from('photos').upload(path,file,{contentType:file.type||undefined});
+    if(error) return;
+    const orig=this.state.cwEditOrigPhoto;
+    // nettoie l'ancien fichier temporaire (jamais l'original sauvegardé)
+    if(prev && prev!==orig) supabase.storage.from('photos').remove([prev]);
+    const url=await this.getSignedUrl('photos',path);
+    this.setState(s=>({[key]:{...s[key],photo:path},signedUrls:{...s.signedUrls,[path]:url}})); };
+  removeCwPhoto=(which)=>()=>{ const key=this.cwPhotoDraftKey(which); const cur=this.state[key]&&this.state[key].photo; const orig=this.state.cwEditOrigPhoto;
+    // fichier temporaire (non encore sauvegardé) → suppression storage immédiate ;
+    // original sauvegardé → on vide juste le champ, la suppression storage a lieu au save.
+    if(cur && cur!==orig) supabase.storage.from('photos').remove([cur]);
+    this.setState(s=>({[key]:{...s[key],photo:''}})); };
   // gestion des tags de marque
   toggleManageBrands=()=>this.setState(s=>({manageBrands:!s.manageBrands}));
   setNewBrand=(e)=>this.setState({newBrand:e.target.value});
@@ -581,9 +627,10 @@ class App extends Component {
       this.filterPass('stash','stock',stockBucket(y.colorways.reduce((s,c)=>s+(c.grams-this.allocatedTo(c.id)),0)))
     ).map(y=>{
       const colorways=y.colorways.map(cw=>{ const alloc=this.allocatedTo(cw.id); const avail=cw.grams-alloc;
+        const photoUrl=cw.photo?st.signedUrls[cw.photo]:'';
         return {id:cw.id,color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:cw.grams,alloc,avail,
           skeins:y.gps?(avail/y.gps).toFixed(1):'0',allocLabel:alloc>0?`${alloc} g réservés`:'',
-          swatch:`width:26px;height:26px;border-radius:50%;flex:none;background:${cw.hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12)`,
+          swatch:`width:26px;height:26px;border-radius:50%;flex:none;background-color:${cw.hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12)`+(photoUrl?`;background-image:url(${photoUrl});background-size:cover;background-position:center`:''),
           editing:st.editingCw===cw.id,startEdit:this.startEditCw(y.id,cw.id),saveEdit:this.saveEditCw(y.id,cw.id),
           setGrams:this.setCwGrams(y.id,cw.id),del:this.deleteCw(y.id,cw.id)}; });
       const totalAvail=colorways.reduce((s,c)=>s+c.avail,0);
@@ -690,6 +737,8 @@ class App extends Component {
       cwDraft:st.cwDraft,setCwColor:this.setCwDraft('color'),setCwHex:this.setCwDraft('hex'),setCwDye:this.setCwDraft('dyeLot'),setCwGramsD:this.setCwDraft('grams'),
       cwEditDraft:st.cwEditDraft,cancelEditCw:this.cancelEditCw,
       setCwEColor:this.setCwEditDraft('color'),setCwEHex:this.setCwEditHex,setCwEDye:this.setCwEditDraft('dyeLot'),setCwEGrams:this.setCwEditDraft('grams'),
+      signedUrls:st.signedUrls,onCwPhotoYarn:this.onCwPhoto('yarn'),onCwPhotoAdd:this.onCwPhoto('add'),onCwPhotoEdit:this.onCwPhoto('edit'),
+      removeCwPhotoYarn:this.removeCwPhoto('yarn'),removeCwPhotoAdd:this.removeCwPhoto('add'),removeCwPhotoEdit:this.removeCwPhoto('edit'),
       stashEmpty:st.stash.length===0,stashFilteredEmpty:st.stash.length>0&&stashRows.length===0,
       stashFilterBtn,stashFilterPanel,brandOptions:allBrands,
       manageBrands:st.manageBrands,toggleManageBrands:this.toggleManageBrands,manageBrandsList,newBrand:st.newBrand,setNewBrand:this.setNewBrand,addBrand:this.addBrand,
@@ -898,7 +947,7 @@ class App extends Component {
                     <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
                       ${y.colorways.map(cw=> cw.editing ? html`
                           <div class="cw-form" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
-                            <div class="field" style="margin:0"><label>Couleur</label>${this.colorDot(v.cwEditDraft.hex,v.setCwEHex)}</div>
+                            <div class="field" style="margin:0"><label>Couleur / photo</label>${this.cwColorPhoto(v.cwEditDraft.hex,v.setCwEHex,v.cwEditDraft.photo,v.cwEditDraft.photo?v.signedUrls[v.cwEditDraft.photo]:'',v.onCwPhotoEdit,v.removeCwPhotoEdit)}</div>
                             <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwEditDraft.color} onInput=${v.setCwEColor}/></div>
                             <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwEditDraft.dyeLot} onInput=${v.setCwEDye}/></div>
                             <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwEditDraft.grams} onInput=${v.setCwEGrams}/></div>
@@ -917,7 +966,7 @@ class App extends Component {
                           </div>`)}
                       ${y.addCwOpen && html`
                         <div class="cw-form" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
-                          <div class="field" style="margin:0"><label>Couleur</label>${this.colorDot(v.cwDraft.hex,v.setCwHex)}</div>
+                          <div class="field" style="margin:0"><label>Couleur / photo</label>${this.cwColorPhoto(v.cwDraft.hex,v.setCwHex,v.cwDraft.photo,v.cwDraft.photo?v.signedUrls[v.cwDraft.photo]:'',v.onCwPhotoAdd,v.removeCwPhotoAdd)}</div>
                           <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwDraft.color} onInput=${v.setCwColor} placeholder="Sauge"/></div>
                           <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwDraft.dyeLot} onInput=${v.setCwDye} placeholder="8533"/></div>
                           <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwDraft.grams} onInput=${v.setCwGramsD} placeholder="100"/></div>
@@ -1284,7 +1333,7 @@ class App extends Component {
           <div style="border-top:1px solid var(--color-divider);margin:16px 0 14px;padding-top:14px">
             <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:10px">Pelote / coloris</div>
             <div style="display:flex;gap:12px;align-items:end;margin-bottom:12px">
-              ${this.colorDot(v.yd.hex,v.setYHex,44)}
+              <div class="field" style="margin:0"><label>Couleur / photo</label>${this.cwColorPhoto(v.yd.hex,v.setYHex,v.yd.photo,v.yd.photo?v.signedUrls[v.yd.photo]:'',v.onCwPhotoYarn,v.removeCwPhotoYarn)}</div>
               <div class="field" style="margin:0;flex:1"><label>Coloris</label><input class="input" value=${v.yd.color} onInput=${v.setYColor} placeholder="Blé"/></div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
