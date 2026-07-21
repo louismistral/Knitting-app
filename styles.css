@@ -287,7 +287,6 @@ body { min-height: 100%; overscroll-behavior: none; -webkit-tap-highlight-color:
 
   /* — Grilles repliées — */
   .stat-grid   { grid-template-columns: repeat(2,1fr) !important; }
-  .profil-stats{ grid-template-columns: repeat(2,1fr) !important; }
   .grid-3      { grid-template-columns: 1fr 1fr !important; }
   .grid-4      { grid-template-columns: 1fr 1fr !important; }
   .form-grid   { grid-template-columns: 1fr !important; }
@@ -296,8 +295,9 @@ body { min-height: 100%; overscroll-behavior: none; -webkit-tap-highlight-color:
   .detail-grid { grid-template-columns: 1fr !important; }
   .detail-side { position: static !important; top: auto !important; }
   .pattern-sec { grid-template-columns: 1fr !important; }
-  .profil-grid { grid-template-columns: 1fr !important; }
   .alloc-add   { grid-template-columns: 1fr !important; }
+  .profile-band{ justify-content: center !important; text-align: center; }
+  .profile-band > div:first-child { margin: 0 auto; }
 
   /* La barre d'action du projet reste visible mais au-dessus de la barre de
      navigation flottante du bas. */

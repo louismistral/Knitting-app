@@ -878,10 +878,10 @@ class App extends Component {
     const memberSince=createdAt? ('Membre depuis '+new Date(createdAt).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})):'';
 
     return {
-      goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goNeedles:this.go('needles'),goProjects:this.go('projects'),goProfil:this.go('profil'),
-      navHome:this.navStyle('home'),navLibrary:this.navStyle('library'),navStash:this.navStyle('stash'),navNeedles:this.navStyle('needles'),navProjects:this.navStyle('projects'),navProfil:this.navStyle('profil'),
+      goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goNeedles:this.go('needles'),goProjects:this.go('projects'),
+      navHome:this.navStyle('home'),navLibrary:this.navStyle('library'),navStash:this.navStyle('stash'),navNeedles:this.navStyle('needles'),navProjects:this.navStyle('projects'),
       homeShow:st.zone==='home'?'':'display:none', libraryShow:st.zone==='library'?'':'display:none',
-      stashShow:st.zone==='stash'?'':'display:none', profilShow:st.zone==='profil'?'':'display:none',
+      stashShow:st.zone==='stash'?'':'display:none',
       needlesShow:st.zone==='needles'?'':'display:none',
       projectsShow:(st.zone==='projects'&&!st.projectDraft)?'':'display:none', detailShow:(st.zone==='projects'&&st.projectDraft)?'':'display:none',
       todayStr:new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}),
@@ -999,11 +999,10 @@ class App extends Component {
           <div><div style="font-family:var(--font-heading);font-size:20px;line-height:1">Maille</div><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent)">carnet de tricot</div></div>
         </div>
         <button class="nav-btn" aria-label="Accueil" title="Accueil" onClick=${v.goHome} style=${v.navHome}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg><span class="nav-label">Accueil</span></button>
-        <button class="nav-btn" aria-label="Bibliothèque" title="Bibliothèque" onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg><span class="nav-label">Bibliothèque</span></button>
+        <button class="nav-btn" aria-label="Projets" title="Projets" onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="nav-label">Projets</span></button>
         <button class="nav-btn" aria-label="Yarn Stash" title="Yarn Stash" onClick=${v.goStash} style=${v.navStash}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 8c4 3 8 5 11 3M5 14c5 2 9 1 13-4M9 20c1-6 3-10 7-13"/></svg><span class="nav-label">Yarn Stash</span></button>
         <button class="nav-btn" aria-label="Aiguilles" title="Aiguilles" onClick=${v.goNeedles} style=${v.navNeedles}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 20 4"/><path d="M14 10l4-4"/><circle cx="4.5" cy="19.5" r="1.4"/><path d="M9 15 6 18"/></svg><span class="nav-label">Aiguilles</span></button>
-        <button class="nav-btn" aria-label="Projets" title="Projets" onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="nav-label">Projets</span></button>
-        <button class="nav-btn" aria-label="Profil" title="Profil" onClick=${v.goProfil} style=${v.navProfil}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg><span class="nav-label">Profil</span></button>
+        <button class="nav-btn" aria-label="Bibliothèque" title="Bibliothèque" onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg><span class="nav-label">Bibliothèque</span></button>
         <div class="side-summary" style="margin-top:auto;padding:14px 12px;border-radius:20px;background:var(--color-accent-2-100)">
           <div style="font-size:11px;color:var(--color-accent-2-700);line-height:1.4">${v.activeCount} projet(s) en cours · ${v.statGramsShort} de laine en réserve</div>
         </div>
@@ -1012,7 +1011,29 @@ class App extends Component {
       <main class="main" style="flex:1;min-width:0;padding:34px 40px 60px;max-width:1120px">
 
         <section style=${v.homeShow}>
-          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px">
+          <!-- Bande profil -->
+          <div class="profile-band" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-radius:26px;background:var(--color-surface);padding:20px 26px;box-shadow:var(--shadow-sm);margin-bottom:24px">
+            <div style="width:64px;height:64px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:26px;color:var(--color-bg)">${v.avatarLetter}</div>
+            <div style="flex:1;min-width:200px">
+              ${!v.editingName && html`
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="font-family:var(--font-heading);font-size:22px">${v.userName}</div>
+                  <button class="btn btn-icon btn-ghost" style="width:24px;height:24px" onClick=${v.startEditName} title="Modifier le nom"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                </div>`}
+              ${v.editingName && html`
+                <div style="display:flex;gap:8px;align-items:center;max-width:320px">
+                  <input class="input" value=${v.nameDraft} onInput=${v.setNameDraft} placeholder="Ton prénom" onKeyDown=${(e)=>{if(e.key==='Enter')v.saveName();}}/>
+                  <button class="btn btn-secondary" onClick=${v.cancelEditName}>Annuler</button><button class="btn btn-primary" onClick=${v.saveName}>Enregistrer</button>
+                </div>`}
+              <div style="font-size:12px;margin-top:2px" class="text-muted">${v.userEmail} · ${v.memberSince}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="tag tag-accent">${v.profActive}</span><span class="tag tag-accent-2">${v.profDone}</span>
+              <button class="btn btn-ghost" onClick=${v.signOut}>Se déconnecter</button>
+            </div>
+          </div>
+
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px">
             <div>
               <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">${v.todayStr}</div>
               <h1 style="margin:0;font-size:40px">Bonjour, ${v.userName}</h1>
@@ -1021,22 +1042,48 @@ class App extends Component {
             <button class="btn btn-primary" onClick=${v.newProject}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nouveau projet</button>
           </div>
 
-          <div class="stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:34px">
+          <!-- Stats + réserve fusionnées -->
+          <div class="stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
             <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
-              <div style="font-family:var(--font-heading);font-size:38px;line-height:1;color:var(--color-accent)">${v.statCompleted}</div>
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1;color:var(--color-accent)">${v.profOwned}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Grammes en réserve</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.profYarns}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Laines · ${v.profColorways} coloris</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.profPatterns}</div>
+              <div style="font-size:13px;margin-top:8px" class="text-muted">Patrons en bibliothèque</div>
+            </div>
+            <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.statCompleted}</div>
               <div style="font-size:13px;margin-top:8px" class="text-muted">Projets terminés</div>
             </div>
             <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
-              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statSkeins}</div>
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.statSkeins}</div>
               <div style="font-size:13px;margin-top:8px" class="text-muted">Pelotes utilisées</div>
             </div>
             <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
-              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statGrams}</div>
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.statGrams}</div>
               <div style="font-size:13px;margin-top:8px" class="text-muted">Grammes utilisés</div>
             </div>
             <div style="padding:22px;border-radius:24px;background:var(--color-surface)">
-              <div style="font-family:var(--font-heading);font-size:38px;line-height:1">${v.statMeters}</div>
+              <div style="font-family:var(--font-heading);font-size:36px;line-height:1">${v.statMeters}</div>
               <div style="font-size:13px;margin-top:8px" class="text-muted">Mètres tricotés</div>
+            </div>
+          </div>
+
+          <!-- Graphique répartition par fibre -->
+          <div style="border-radius:22px;background:var(--color-surface);padding:22px;margin-bottom:34px">
+            <h4 style="margin:0 0 16px;font-size:18px">Ta réserve par fibre</h4>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              ${v.profFibers.map(f=>html`
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span style="font-weight:600">${f.label}</span><span class="text-muted">${f.grams} g · ${f.pct}%</span></div>
+                  <div style="background:var(--color-bg);border-radius:999px"><div style=${f.bar}></div></div>
+                </div>`)}
+              ${v.profFibers.length===0 && html`<div class="text-muted" style="font-size:13px">Aucune laine en réserve.</div>`}
             </div>
           </div>
 
@@ -1411,50 +1458,6 @@ class App extends Component {
                 <button class="btn btn-ghost" onClick=${v.deleteProject}>Supprimer</button>
               </div>
             </div>`}
-        </section>
-
-        <section style=${v.profilShow}>
-          <h1 style="margin:0 0 22px;font-size:36px">Profil</h1>
-          <div class="profil-grid" style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
-            <div style="border-radius:26px;background:var(--color-surface);padding:26px;text-align:center;box-shadow:var(--shadow-sm)">
-              <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">${v.avatarLetter}</div>
-              ${!v.editingName && html`
-                <div style="display:flex;align-items:center;justify-content:center;gap:6px">
-                  <div style="font-family:var(--font-heading);font-size:24px">${v.userName}</div>
-                  <button class="btn btn-icon btn-ghost" style="width:26px;height:26px" onClick=${v.startEditName} title="Modifier le nom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
-                </div>`}
-              ${v.editingName && html`
-                <div style="display:flex;flex-direction:column;gap:8px;margin:0 auto;max-width:220px">
-                  <input class="input" value=${v.nameDraft} onInput=${v.setNameDraft} placeholder="Ton prénom" style="text-align:center" onKeyDown=${(e)=>{if(e.key==='Enter')v.saveName();}}/>
-                  <div style="display:flex;gap:8px;justify-content:center"><button class="btn btn-secondary" onClick=${v.cancelEditName}>Annuler</button><button class="btn btn-primary" onClick=${v.saveName}>Enregistrer</button></div>
-                </div>`}
-              <div style="font-size:12px;margin-top:2px" class="text-muted">${v.userEmail}</div>
-              <div style="font-size:13px;margin-top:6px" class="text-muted">${v.memberSince}</div>
-              <div style="display:flex;justify-content:center;gap:8px;margin-top:16px"><span class="tag tag-accent">${v.profActive}</span><span class="tag tag-accent-2">${v.profDone}</span></div>
-              <button class="btn btn-ghost" style="margin-top:18px;justify-content:center;width:100%" onClick=${v.signOut}>Se déconnecter</button>
-            </div>
-
-            <div style="display:flex;flex-direction:column;gap:22px">
-              <div class="profil-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px;color:var(--color-accent)">${v.profOwned}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Grammes en réserve</div></div>
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profYarns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Laines · ${v.profColorways} coloris</div></div>
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.profPatterns}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Patrons en bibliothèque</div></div>
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statMeters}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Mètres tricotés</div></div>
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statGrams}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Grammes utilisés</div></div>
-                <div style="padding:20px;border-radius:22px;background:var(--color-surface)"><div style="font-family:var(--font-heading);font-size:32px">${v.statSkeins}</div><div style="font-size:12.5px;margin-top:6px" class="text-muted">Pelotes utilisées</div></div>
-              </div>
-              <div style="border-radius:22px;background:var(--color-surface);padding:22px">
-                <h4 style="margin:0 0 16px;font-size:18px">Ta réserve par fibre</h4>
-                <div style="display:flex;flex-direction:column;gap:14px">
-                  ${v.profFibers.map(f=>html`
-                    <div>
-                      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span style="font-weight:600">${f.label}</span><span class="text-muted">${f.grams} g · ${f.pct}%</span></div>
-                      <div style="background:var(--color-bg);border-radius:999px"><div style=${f.bar}></div></div>
-                    </div>`)}
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
 
       </main>
