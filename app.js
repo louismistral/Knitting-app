@@ -28,6 +28,7 @@ class App extends Component {
       editingProject:null, projectDraft:null, projectDraftInitial:null,
       allocPick:{colorwayId:'',grams:''}, needlePick:'',
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
+      tagPrompt:null,         // {kind:'category'|'author', value}
       // ---- needle stash ----
       needleDialog:false, needleDraft:this.blankNeedle(), needleEditId:null,
       manageSizes:false, newSize:'',
@@ -376,6 +377,19 @@ class App extends Component {
     if(d.path && d.path!==this.state.patternOrigPath) supabase.storage.from('patterns').remove([d.path]);
     this.setState({patternDialog:false,patternEditId:null,patternOrigPath:''}); };
   setPatternDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({patternDraft:{...s.patternDraft,[f]:v}})); };
+  // Petite fenêtre flottante « Nouvelle catégorie / Nouvel auteur » (cercle + à côté du sélecteur).
+  openTagPrompt=(kind)=>()=>this.setState({tagPrompt:{kind,value:''}});
+  closeTagPrompt=()=>this.setState({tagPrompt:null});
+  setTagPromptValue=(e)=>{ const v=e.target.value; this.setState(s=>({tagPrompt:{...s.tagPrompt,value:v}})); };
+  confirmTagPrompt=async()=>{ const tp=this.state.tagPrompt; if(!tp) return; const val=tp.value.trim(); if(!val) return;
+    if(tp.kind==='category'){
+      if(!this.state.categories.includes(val)) await this.saveMeta({categories:[...this.state.categories,val]});
+      this.setState(s=>({patternDraft:{...s.patternDraft,category:val}}));
+    } else {
+      if(!this.state.authors.includes(val)) await this.saveMeta({authors:[...this.state.authors,val]});
+      this.setState(s=>({patternDraft:{...s.patternDraft,author:val}}));
+    }
+    this.setState({tagPrompt:null}); };
   onPatternFile=async(e)=>{ const file=e.target.files[0]; if(!file) return;
     const isImg=file.type.startsWith('image'); const kind=isImg?'img':'pdf'; const path=this.storagePath(file);
     const prev=this.state.patternDraft.path;
@@ -748,6 +762,8 @@ class App extends Component {
       newAuthor:st.newAuthor,setNewAuthor:this.setNewAuthor,addAuthor:this.addAuthor,
       patternDialog:st.patternDialog,patternEdit:!!st.patternEditId,pd:st.patternDraft,closePattern:this.closePattern,savePattern:this.savePattern,onPatternFile:this.onPatternFile,
       catOptions:allCats,authorOptions:allAuthors,
+      tagPrompt:st.tagPrompt,openCatPrompt:this.openTagPrompt('category'),openAuthorPrompt:this.openTagPrompt('author'),
+      closeTagPrompt:this.closeTagPrompt,setTagPromptValue:this.setTagPromptValue,confirmTagPrompt:this.confirmTagPrompt,
       setPName:this.setPatternDraft('name'),setPCat:this.setPatternDraft('category'),setPAuthor:this.setPatternDraft('author'),
       pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',
       pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.path&&st.signedUrls[st.patternDraft.path])?`background-image:url(${st.signedUrls[st.patternDraft.path]});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
@@ -1294,24 +1310,28 @@ class App extends Component {
           </label>
           <div class="field"><label>Nom du patron</label><input class="input" value=${v.pd.name} onInput=${v.setPName} placeholder="Sweater No.9"/></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div class="field"><label>Catégorie</label>
+            <div class="field">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px"><label style="margin:0">Catégorie</label><button class="btn btn-icon btn-secondary" style="width:22px;height:22px" onClick=${v.openCatPrompt} title="Nouvelle catégorie"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
               <select class="input" value=${v.pd.category} onChange=${v.setPCat}>
                 <option value="">—</option>
                 ${v.catOptions.map(c=>html`<option value=${c}>${c}</option>`)}
               </select>
-              <div style="display:flex;gap:6px;margin-top:6px"><input class="input" value=${v.newCategory} onInput=${v.setNewCategory} placeholder="Nouvelle…" style="font-size:13px" onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.addCategory();}}}/><button class="btn btn-icon btn-secondary" onClick=${v.addCategory} title="Ajouter la catégorie"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
             </div>
-            <div class="field"><label>Auteur / créateur</label>
+            <div class="field">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px"><label style="margin:0">Auteur / créateur</label><button class="btn btn-icon btn-secondary" style="width:22px;height:22px" onClick=${v.openAuthorPrompt} title="Nouvel auteur"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
               <select class="input" value=${v.pd.author} onChange=${v.setPAuthor}>
                 <option value="">—</option>
                 ${v.authorOptions.map(a=>html`<option value=${a}>${a}</option>`)}
               </select>
-              <div style="display:flex;gap:6px;margin-top:6px"><input class="input" value=${v.newAuthor} onInput=${v.setNewAuthor} placeholder="Nouvel auteur…" style="font-size:13px" onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.addAuthor();}}}/><button class="btn btn-icon btn-secondary" onClick=${v.addAuthor} title="Ajouter l'auteur"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
             </div>
           </div>
           <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.savePattern}>${v.patternEdit?'Enregistrer':'Ajouter'}</button></div>
         </div>
       </div>`}
+
+    ${v.tagPrompt && this.renderModal({title:v.tagPrompt.kind==='category'?'Nouvelle catégorie':'Nouvel auteur',width:360,z:65,onBackdrop:v.closeTagPrompt,
+      body:html`<div class="field" style="margin:0"><input class="input" value=${v.tagPrompt.value} onInput=${v.setTagPromptValue} placeholder=${v.tagPrompt.kind==='category'?'ex. Chaussettes':'ex. PetiteKnit'} onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.confirmTagPrompt();}}}/></div>`,
+      actions:html`<button class="btn btn-secondary" onClick=${v.closeTagPrompt}>Annuler</button><button class="btn btn-primary" onClick=${v.confirmTagPrompt}>Ajouter</button>`})}
 
     ${v.yarnDialog && this.renderModal({title:v.yarnEdit?'Modifier la laine':'Nouvelle laine',width:520,onBackdrop:v.closeYarnDialog,
       body:html`
