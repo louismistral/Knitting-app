@@ -41,8 +41,11 @@ class App extends Component {
       // ---- primitives Phase 1 : confirmation & filtres ----
       confirm:null,           // {title,message,confirmLabel,onConfirm}
       filters:{}, filterOpen:{},
+      // ---- glisser-déposer des photos de projet (Phase 5c) ----
+      dragPhoto:null,         // {idx,key,w,h,grabX,grabY,x,y,url}
     };
     this._loadingData=false;
+    this._flipFirst=null;   // rects « First » pour l'animation FLIP des vignettes
   }
   blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:'',photo:''}; }
   blankPattern(){ return {name:'',category:'Pull',author:'',path:'',fileName:'',kind:''}; }
@@ -232,10 +235,11 @@ class App extends Component {
       allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
       needleLinks:(pr.project_needles||[]).map(pn=>({rowId:pn.id,needleId:pn.needle_id})),
       patternLinks:(pr.project_patterns||[]).map(pp=>({rowId:pp.id,patternId:pp.pattern_id})),
-      photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
+      photos:(pr.project_photos||[]).slice().sort((a,b)=>(a.position-b.position)||(new Date(a.created_at)-new Date(b.created_at)))
+        .map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type,position:ph.position||0}))}));
     this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns,stash)});
     this._loadingData=false;
-    this.refreshSignedUrls();
+    this.refreshSignedUrls({stash,patterns,projects});
   }
   deriveMeta(patterns,stash){
     const u=this.state.session&&this.state.session.user;
@@ -258,12 +262,15 @@ class App extends Component {
     this.setState(statePatch);
     try{ await supabase.auth.updateUser({data:patch}); }catch(e){}
   }
-  async refreshSignedUrls(){
-    const patternPaths=[...new Set(this.state.patterns.filter(p=>p.kind==='img'&&p.path).map(p=>p.path))];
+  // `src` permet de passer les données fraîchement chargées (setState de Preact
+  // n'étant pas encore appliqué juste après loadAll) ; sinon on lit l'état courant.
+  async refreshSignedUrls(src){
+    const st=src||this.state;
+    const patternPaths=[...new Set(st.patterns.filter(p=>p.kind==='img'&&p.path).map(p=>p.path))];
     const photoPaths=[...new Set([
-      ...this.state.projects.flatMap(p=>p.photos.map(ph=>ph.path)),
+      ...st.projects.flatMap(p=>p.photos.map(ph=>ph.path)),
       ...(this.state.projectDraft? this.state.projectDraft.photos.map(ph=>ph.path):[]),
-      ...this.state.stash.flatMap(y=>y.colorways.map(c=>c.photo).filter(Boolean)),
+      ...st.stash.flatMap(y=>y.colorways.map(c=>c.photo).filter(Boolean)),
     ])];
     const updates={};
     if(patternPaths.length){ const {data}=await supabase.storage.from('patterns').createSignedUrls(patternPaths,3600); (data||[]).forEach(d=>{ if(d.signedUrl) updates[d.path]=d.signedUrl; }); }
@@ -587,8 +594,8 @@ class App extends Component {
       let photos=d.photos;
       if(d.photos.length){
         const {data:photoRows}=await supabase.from('project_photos')
-          .insert(d.photos.map(ph=>({user_id:uid,project_id:row.id,path:ph.path,name:ph.name,type:ph.type}))).select();
-        if(photoRows) photos=photoRows.map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}));
+          .insert(d.photos.map((ph,i)=>({user_id:uid,project_id:row.id,path:ph.path,name:ph.name,type:ph.type,position:i}))).select();
+        if(photoRows) photos=photoRows.slice().sort((a,b)=>a.position-b.position).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type,position:ph.position||0}));
       }
       let needleLinks=d.needleLinks||[];
       if(needleLinks.length){
@@ -658,20 +665,87 @@ class App extends Component {
     const {error}=await supabase.storage.from('photos').upload(path,file,{contentType:file.type||undefined});
     if(error) return;
     const url=await this.getSignedUrl('photos',path);
-    const d=this.state.projectDraft; let rowId=null;
+    const d=this.state.projectDraft; let rowId=null; const pos=(d.photos||[]).length;
     if(d.id){ const uid=this.state.session.user.id;
-      const {data}=await supabase.from('project_photos').insert({user_id:uid,project_id:d.id,path,name:file.name,type:file.type}).select().single();
+      const {data}=await supabase.from('project_photos').insert({user_id:uid,project_id:d.id,path,name:file.name,type:file.type,position:pos}).select().single();
       rowId=data?data.id:null;
     }
-    this.setState(s=>({projectDraft:{...s.projectDraft,photos:[...s.projectDraft.photos,{rowId,path,name:file.name,type:file.type}]},signedUrls:{...s.signedUrls,[path]:url}})); };
+    this.setState(s=>({projectDraft:{...s.projectDraft,photos:[...s.projectDraft.photos,{rowId,path,name:file.name,type:file.type,position:pos}]},signedUrls:{...s.signedUrls,[path]:url}})); };
   removePhoto=(i)=>async()=>{ const d=this.state.projectDraft; const ph=d.photos[i];
     await supabase.storage.from('photos').remove([ph.path]);
     if(ph.rowId) await supabase.from('project_photos').delete().eq('id',ph.rowId);
     this.setState(s=>({projectDraft:{...s.projectDraft,photos:s.projectDraft.photos.filter((x,idx)=>idx!==i)}})); };
 
+  // ---- glisser-déposer des photos (pointer events : tactile + souris) ----
+  photoKey(ph){ return ph.rowId||ph.path; }
+  photoPointerDown=(i)=>(e)=>{
+    if(e.button&&e.button!==0) return;                 // souris : bouton gauche seulement
+    const tile=e.currentTarget; const r=tile.getBoundingClientRect();
+    const d=this.state.projectDraft; const ph=d.photos[i];
+    this.setState({dragPhoto:{idx:i,key:this.photoKey(ph),w:r.width,h:r.height,
+      grabX:e.clientX-r.left,grabY:e.clientY-r.top,x:e.clientX,y:e.clientY,url:this.state.signedUrls[ph.path]||''}});
+    window.addEventListener('pointermove',this._onPhotoMove,{passive:false});
+    window.addEventListener('pointerup',this._onPhotoUp);
+    window.addEventListener('pointercancel',this._onPhotoUp);
+  };
+  _capturePhotoRects(){ const m={}; if(!this._photoGrid) return m;
+    this._photoGrid.querySelectorAll('[data-photo-key]').forEach(el=>{ m[el.getAttribute('data-photo-key')]=el.getBoundingClientRect(); });
+    return m; }
+  _onPhotoMove=(e)=>{ const dp=this.state.dragPhoto; if(!dp) return;
+    e.preventDefault();
+    const x=e.clientX,y=e.clientY;
+    let targetIdx=dp.idx;
+    const el=document.elementFromPoint(x,y);
+    const tile=el&&el.closest&&el.closest('[data-photo-idx]');
+    if(tile){ const ti=parseInt(tile.getAttribute('data-photo-idx'),10); if(!isNaN(ti)) targetIdx=ti; }
+    if(targetIdx!==dp.idx){
+      this._flipFirst=this._capturePhotoRects();       // « First » avant réordonnancement (pour FLIP)
+      this.setState(s=>{ const photos=s.projectDraft.photos.slice(); const [moved]=photos.splice(dp.idx,1); photos.splice(targetIdx,0,moved);
+        return {projectDraft:{...s.projectDraft,photos},dragPhoto:{...s.dragPhoto,idx:targetIdx,x,y}}; });
+    } else {
+      this.setState(s=>({dragPhoto:{...s.dragPhoto,x,y}}));
+    }
+  };
+  _onPhotoUp=async()=>{
+    window.removeEventListener('pointermove',this._onPhotoMove);
+    window.removeEventListener('pointerup',this._onPhotoUp);
+    window.removeEventListener('pointercancel',this._onPhotoUp);
+    const dp=this.state.dragPhoto; this.setState({dragPhoto:null});
+    if(!dp) return;
+    // Persiste le nouvel ordre : met à jour la position des lignes dont l'index a changé.
+    const d=this.state.projectDraft; if(!d) return;
+    const updates=[];
+    const photos=d.photos.map((ph,i)=>{ if(ph.position!==i){ if(ph.rowId&&d.id) updates.push({id:ph.rowId,position:i}); return {...ph,position:i}; } return ph; });
+    if(updates.length){
+      // Met aussi à jour la liste des projets pour que la vignette de carte reflète le nouvel ordre.
+      this.setState(s=>({projectDraft:{...s.projectDraft,photos},
+        projects:d.id?s.projects.map(p=>p.id===d.id?{...p,photos}:p):s.projects}));
+      for(const u of updates){ await supabase.from('project_photos').update({position:u.position}).eq('id',u.id); }
+    }
+  };
+  // Animation FLIP : les vignettes non déplacées glissent vers leur nouvelle case.
+  componentDidUpdate(){
+    if(!this._flipFirst||!this._photoGrid) { this._flipFirst=null; return; }
+    const first=this._flipFirst; this._flipFirst=null;
+    const dragKey=this.state.dragPhoto&&this.state.dragPhoto.key;
+    this._photoGrid.querySelectorAll('[data-photo-key]').forEach(el=>{
+      const key=el.getAttribute('data-photo-key'); if(key===dragKey) return;
+      const f=first[key]; if(!f) return;
+      const l=el.getBoundingClientRect(); const dx=f.left-l.left, dy=f.top-l.top;
+      if(!dx&&!dy) return;
+      el.style.transition='none'; el.style.transform=`translate(${dx}px,${dy}px)`;
+      el.getBoundingClientRect();                        // force reflow
+      requestAnimationFrame(()=>{ el.style.transition='transform .18s ease'; el.style.transform=''; });
+    });
+  }
+
   closeModals=()=>this.setState({patternDialog:false,patternEditId:null,patternOrigPath:''});
 
   thumb(hex){ return `height:120px;background:linear-gradient(135deg,${hex} 0%,color-mix(in srgb,${hex} 60%,#000) 130%)`; }
+  // Vignette de la carte projet : première photo si présente, sinon dégradé sur la couleur de laine.
+  projThumbStyle(p,map){ const first=(p.photos||[])[0]; const url=first&&this.state.signedUrls[first.path];
+    if(url) return `height:120px;background-image:url(${url});background-size:cover;background-position:center`;
+    return this.thumb(this.projHex(p,map)); }
 
   renderVals(){
     const st=this.state, map=this.cwMap();
@@ -690,7 +764,7 @@ class App extends Component {
     const yarnDot=(p)=>{ const e=p.allocations[0]&&map[p.allocations[0].colorwayId]; return `width:11px;height:11px;border-radius:50%;flex:none;background:${e?e.cw.hex:'var(--color-neutral-400)'}`; };
     const since=(p)=>{ if(!p.startDate) return ''; const d=new Date(p.startDate); return 'depuis '+d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}); };
 
-    const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p),thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
+    const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p),thumbStyle:this.projThumbStyle(p,map),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
 
     const stockBucket=(g)=>g<=0?'Épuisé':g<100?'< 100 g':g<300?'100–300 g':g<600?'300–600 g':'600 g +';
     const stashRows=st.stash.filter(y=>
@@ -761,7 +835,9 @@ class App extends Component {
           setGrams:this.setAllocGrams(i),remove:this.removeAlloc(i)}; });
       const options=[]; st.stash.forEach(y=>y.colorways.forEach(cw=>{ const avail=cw.grams-this.allocatedTo(cw.id); options.push({id:cw.id,label:`${y.name} · ${cw.color} — ${avail} g dispo`}); }));
       const photos=d.photos.map((ph,i)=>{ const url=st.signedUrls[ph.path]||'';
-        return {remove:this.removePhoto(i), imgEl: url? h('img',{src:url,style:{width:'100%',height:'100%',objectFit:'cover'}}) : h('div',{style:{width:'100%',height:'100%',background:'var(--color-neutral-200)'}})}; });
+        return {key:this.photoKey(ph),idx:i,remove:this.removePhoto(i),onDown:this.photoPointerDown(i),
+          dragging:!!(st.dragPhoto&&st.dragPhoto.key===this.photoKey(ph)),
+          imgEl: url? h('img',{src:url,draggable:false,style:{width:'100%',height:'100%',objectFit:'cover',pointerEvents:'none'}}) : h('div',{style:{width:'100%',height:'100%',background:'var(--color-neutral-200)'}})}; });
       const needleLinks=(d.needleLinks||[]).map((l,i)=>{ const n=st.needles.find(x=>x.id===l.needleId);
         return {label:n?this.needleLabel(n):'Aiguille supprimée',interchangeable:!!(n&&n.interchangeable),remove:this.removeProjectNeedle(i)}; });
       const linkedNeedleIds=new Set((d.needleLinks||[]).map(l=>l.needleId));
@@ -791,7 +867,7 @@ class App extends Component {
 
     const projectCards=st.projects.map(p=>({id:p.id,name:p.name,patternName:patName(p),done:!!p.endDate,
       statusLabel:p.endDate?'Terminé':'En cours',statusClass:p.endDate?'tag tag-neutral':'tag tag-accent-2',
-      thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),
+      thumbStyle:this.projThumbStyle(p,map),yarnLine:yarnLine(p),yarnDot:yarnDot(p),
       dateLabel:p.endDate?('Fini le '+new Date(p.endDate).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})):since(p),
       open:this.editProject(p.id)}));
 
@@ -841,7 +917,7 @@ class App extends Component {
       setPickId:this.setAllocPick('colorwayId'),setPickGrams:this.setAllocPick('grams'),addAlloc:this.addAlloc,
       setNeedlePick:this.setNeedlePick,addProjectNeedle:this.addProjectNeedle,
       setPatternPick:this.setPatternPick,addProjectPattern:this.addProjectPattern,
-      onProjectPhoto:this.onProjectPhoto,
+      onProjectPhoto:this.onProjectPhoto,dragPhoto:st.dragPhoto,setPhotoGridRef:(el)=>{this._photoGrid=el;},
       pendingNav:st.pendingNav,confirmNavSave:this.confirmNavSave,confirmNavDiscard:this.confirmNavDiscard,cancelNav:this.cancelNav,
       confirm:st.confirm,confirmYes:this.confirmYes,confirmNo:this.confirmNo,
       // needle stash
@@ -1312,9 +1388,15 @@ class App extends Component {
                 <!-- Section 5 · Photos -->
                 <div style="border-radius:22px;background:var(--color-surface);padding:20px">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div>${this.addFileBtn('Ajouter',v.onProjectPhoto)}</div>
-                  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
+                  ${v.detail.photos.length>1 && html`<div class="text-muted" style="font-size:11.5px;margin-bottom:10px">Glisse les photos pour les réordonner. La première est la vignette du projet.</div>`}
+                  <div ref=${v.setPhotoGridRef} style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
                     ${v.detail.photos.map(ph=>html`
-                      <div style="position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1">${ph.imgEl}<button onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button></div>`)}
+                      <div key=${ph.key} data-photo-key=${ph.key} data-photo-idx=${ph.idx} onPointerDown=${ph.onDown}
+                        style=${'position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1;cursor:grab;touch-action:none;user-select:none;'+(ph.dragging?'opacity:.25;':'')}>
+                        ${ph.imgEl}
+                        ${ph.idx===0 && html`<span style="position:absolute;top:5px;left:5px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;font-weight:600;pointer-events:none">Vignette</span>`}
+                        <button onPointerDown=${(e)=>e.stopPropagation()} onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button>
+                      </div>`)}
                     ${v.detail.photos.length===0 && html`<div class="text-muted" style="font-size:13px;grid-column:1/-1;padding:4px 2px">Aucune photo.</div>`}
                   </div>
                 </div>
@@ -1473,6 +1555,11 @@ class App extends Component {
       actions:html`
         <button class="btn btn-secondary" onClick=${v.confirmNo}>Annuler</button>
         <button class="btn btn-primary" style="background:var(--color-accent-700)" onClick=${v.confirmYes}>${v.confirm.confirmLabel||'Supprimer'}</button>`})}
+
+    ${v.dragPhoto && v.dragPhoto.url && html`
+      <div style=${`position:fixed;left:${v.dragPhoto.x-v.dragPhoto.grabX}px;top:${v.dragPhoto.y-v.dragPhoto.grabY}px;width:${v.dragPhoto.w}px;height:${v.dragPhoto.h}px;border-radius:14px;overflow:hidden;pointer-events:none;z-index:120;box-shadow:0 12px 30px rgba(0,0,0,.35);transform:scale(1.05);transition:transform .1s ease`}>
+        <img src=${v.dragPhoto.url} draggable="false" style="width:100%;height:100%;object-fit:cover"/>
+      </div>`}
     `;
   }
 }
