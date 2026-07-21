@@ -20,10 +20,11 @@ class App extends Component {
       stash:[], patterns:[], projects:[], needles:[], signedUrls:{},
       // ---- UI ----
       zone:'home',
-      expandedYarn:null, addYarnOpen:false,
-      yarnDraft:this.blankYarn(),
-      editingYarn:null, yarnEditDraft:null,
+      expandedYarn:null,
+      yarnDialog:false, yarnDraft:this.blankYarn(), yarnEditId:null,
       cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
+      editingCw:null, cwEditDraft:null,
+      manageBrands:false, newBrand:'',
       editingProject:null, projectDraft:null, projectDraftInitial:null,
       allocPick:{colorwayId:'',grams:''}, needlePick:'',
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
@@ -31,7 +32,7 @@ class App extends Component {
       needleDialog:false, needleDraft:this.blankNeedle(), needleEditId:null,
       manageSizes:false, newSize:'',
       // ---- taxonomies + profil (stockés dans user_metadata) ----
-      categories:[], authors:[], needleSizes:[], displayName:'',
+      categories:[], authors:[], needleSizes:[], brands:[], displayName:'',
       manageTax:false, newCategory:'', newAuthor:'',
       editingName:false, nameDraft:'',
       // ---- garde-fou navigation ----
@@ -54,6 +55,12 @@ class App extends Component {
 
   // Bouton « + <texte> » en pointillé.
   addBtn(label,onClick,extraStyle){ return html`<button class="btn-add" style=${extraStyle||''} onClick=${onClick}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${label}</button>`; }
+
+  // Rond de couleur plein cliquable (ouvre le sélecteur natif au clic).
+  colorDot(hex,onChange,size){ const s=size||34;
+    return html`<label style="display:inline-block;position:relative;width:${s}px;height:${s}px;border-radius:50%;background:${hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12);cursor:pointer;flex:none">
+      <input type="color" value=${hex} onInput=${onChange} style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:none;padding:0"/>
+    </label>`; }
 
   // Toggle segmenté (N options), le pouce glisse sous l'option active.
   segToggle(options,value,onChange,width){ const n=options.length; const idx=Math.max(0,options.findIndex(o=>o.value===value));
@@ -116,7 +123,7 @@ class App extends Component {
     supabase.auth.onAuthStateChange((event,session)=>{
       if(event==='SIGNED_OUT'){
         this.setState({session:null,sessionChecked:true,loaded:false,stash:[],patterns:[],projects:[],needles:[],signedUrls:{},
-          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false,needleDialog:false,needleEditId:null});
+          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,yarnDialog:false,yarnEditId:null,patternDialog:false,needleDialog:false,needleEditId:null});
       } else if(session){
         this.setState({session,sessionChecked:true});
         if(!this.state.loaded) this.loadAll();
@@ -177,20 +184,22 @@ class App extends Component {
       allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
       needleLinks:(pr.project_needles||[]).map(pn=>({rowId:pn.id,needleId:pn.needle_id})),
       photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
-    this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns)});
+    this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns,stash)});
     this._loadingData=false;
     this.refreshSignedUrls();
   }
-  deriveMeta(patterns){
+  deriveMeta(patterns,stash){
     const u=this.state.session&&this.state.session.user;
     const meta=(u&&u.user_metadata)||{};
     const usedCats=Array.from(new Set(patterns.map(p=>p.category).filter(Boolean)));
     const usedAuthors=Array.from(new Set(patterns.map(p=>p.author).filter(Boolean)));
+    const usedBrands=Array.from(new Set((stash||[]).map(y=>y.brand).filter(Boolean)));
     const defaults=['Pull','Gilet','Bonnet','Chaussettes','Écharpe','Châle','Accessoire','Autre'];
     const categories=Array.isArray(meta.categories)&&meta.categories.length?meta.categories.slice():Array.from(new Set([...defaults,...usedCats]));
     const authors=Array.isArray(meta.authors)?meta.authors.slice():usedAuthors;
+    const brands=Array.isArray(meta.brands)?meta.brands.slice():usedBrands;
     const needleSizes=Array.isArray(meta.needle_sizes)&&meta.needle_sizes.length?meta.needle_sizes.slice():this.standardSizes();
-    return {categories,authors,needleSizes,displayName:meta.display_name||''};
+    return {categories,authors,brands,needleSizes,displayName:meta.display_name||''};
   }
   async saveMeta(patch){
     // `patch` utilise les clés snake_case de user_metadata (côté Supabase) ;
@@ -246,38 +255,43 @@ class App extends Component {
   }
 
   // ---- yarn stash ----
+  openYarnAdd=()=>this.setState({yarnDialog:true,yarnEditId:null,yarnDraft:this.blankYarn()});
+  openYarnEdit=(id)=>(e)=>{ e&&e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id); if(!y) return;
+    this.setState({yarnDialog:true,yarnEditId:id,yarnDraft:{...this.blankYarn(),brand:y.brand,name:y.name,mps:String(y.mps||''),gps:String(y.gps||''),blend:y.blend||''}}); };
+  closeYarnDialog=()=>this.setState({yarnDialog:false,yarnEditId:null});
   setYarnDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,[f]:v}})); };
-  addYarn=async()=>{
-    const d=this.state.yarnDraft;
-    if(!d.name.trim()||!d.brand.trim()) return;
-    const uid=this.state.session.user.id;
-    const {data:yarnRow}=await supabase.from('yarns').insert({user_id:uid,brand:d.brand.trim(),name:d.name.trim(),
-      meters_per_skein:Number(d.mps)||0,grams_per_skein:Number(d.gps)||0,blend:d.blend.trim()}).select().single();
-    if(!yarnRow) return;
-    const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yarnRow.id,
-      color:d.color.trim()||'Coloris 1',hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
-    const yarn={id:yarnRow.id,brand:yarnRow.brand,name:yarnRow.name,mps:Number(yarnRow.meters_per_skein)||0,gps:Number(yarnRow.grams_per_skein)||0,blend:yarnRow.blend,
-      colorways:cwRow?[{id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0}]:[]};
-    this.setState(s=>({stash:[yarn,...s.stash],yarnDraft:this.blankYarn(),addYarnOpen:false,expandedYarn:yarn.id}));
+  setYarnDraftHex=(e)=>{ const v=e.target.value; this.setState(s=>({yarnDraft:{...s.yarnDraft,hex:v}})); };
+  saveYarn=async()=>{
+    const d=this.state.yarnDraft; if(!d.name.trim()||!d.brand.trim()) return;
+    const brand=d.brand.trim();
+    if(brand && !this.state.brands.includes(brand)) this.saveMeta({brands:[...this.state.brands,brand]});
+    const cols={brand,name:d.name.trim(),meters_per_skein:Number(d.mps)||0,grams_per_skein:Number(d.gps)||0,blend:d.blend.trim()};
+    const editId=this.state.yarnEditId;
+    if(editId){
+      await supabase.from('yarns').update(cols).eq('id',editId);
+      this.setState(s=>({stash:s.stash.map(y=>y.id!==editId?y:{...y,brand:cols.brand,name:cols.name,mps:cols.meters_per_skein,gps:cols.grams_per_skein,blend:cols.blend}),yarnDialog:false,yarnEditId:null}));
+    } else {
+      if(!d.color.trim()) return;
+      const uid=this.state.session.user.id;
+      const {data:yarnRow}=await supabase.from('yarns').insert({user_id:uid,...cols}).select().single();
+      if(!yarnRow) return;
+      const {data:cwRow}=await supabase.from('colorways').insert({user_id:uid,yarn_id:yarnRow.id,
+        color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0}).select().single();
+      const yarn={id:yarnRow.id,brand:yarnRow.brand,name:yarnRow.name,mps:Number(yarnRow.meters_per_skein)||0,gps:Number(yarnRow.grams_per_skein)||0,blend:yarnRow.blend,
+        colorways:cwRow?[{id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0}]:[]};
+      this.setState(s=>({stash:[yarn,...s.stash],yarnDialog:false,yarnDraft:this.blankYarn(),expandedYarn:yarn.id}));
+    }
   };
-  toggleAddYarn=()=>this.setState(s=>({addYarnOpen:!s.addYarnOpen}));
   toggleYarn=(id)=>()=>this.setState(s=>({expandedYarn:s.expandedYarn===id?null:id}));
   deleteYarn=(id)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id);
     this.askConfirm({title:'Supprimer la laine ?',message:`« ${y?y.name:'Cette laine'} » et tous ses coloris seront définitivement supprimés.`,
       onConfirm:()=>this._deleteYarn(id)}); };
   _deleteYarn=async(id)=>{ await supabase.from('yarns').delete().eq('id',id);
     this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
-  startEditYarn=(id)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id);
-    this.setState({editingYarn:id,yarnEditDraft:{brand:y.brand,name:y.name,mps:String(y.mps||''),gps:String(y.gps||''),blend:y.blend||''}}); };
-  cancelEditYarn=()=>this.setState({editingYarn:null,yarnEditDraft:null});
-  setYarnEditDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnEditDraft:{...s.yarnEditDraft,[f]:v}})); };
-  saveEditYarn=(id)=>async()=>{ const d=this.state.yarnEditDraft; if(!d||!d.name.trim()||!d.brand.trim()) return;
-    const cols={brand:d.brand.trim(),name:d.name.trim(),meters_per_skein:Number(d.mps)||0,grams_per_skein:Number(d.gps)||0,blend:d.blend.trim()};
-    await supabase.from('yarns').update(cols).eq('id',id);
-    this.setState(s=>({stash:s.stash.map(y=>y.id!==id?y:{...y,brand:cols.brand,name:cols.name,mps:cols.meters_per_skein,gps:cols.grams_per_skein,blend:cols.blend}),editingYarn:null,yarnEditDraft:null})); };
   setCwGrams=(yid,cid)=>async(e)=>{ const v=Number(e.target.value)||0; await supabase.from('colorways').update({grams:v}).eq('id',cid);
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
   startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}});
+  cancelCw=()=>this.setState({cwFor:null});
   setCwDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwDraft:{...s.cwDraft,[f]:v}})); };
   addCw=(yid)=>async()=>{ const d=this.state.cwDraft; if(!d.color.trim()) return;
     const uid=this.state.session.user.id;
@@ -285,8 +299,27 @@ class App extends Component {
     if(!cwRow) return;
     const cw={id:cwRow.id,color:cwRow.color,hex:cwRow.hex,dyeLot:cwRow.dye_lot,grams:Number(cwRow.grams)||0};
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:[...y.colorways,cw]}),cwFor:null})); };
-  deleteCw=(yid,cid)=>async(e)=>{ e.stopPropagation(); await supabase.from('colorways').delete().eq('id',cid);
+  deleteCw=(yid,cid)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid);
+    this.askConfirm({title:'Supprimer le coloris ?',message:`« ${cw?cw.color:'Ce coloris'} » sera définitivement supprimé.`,
+      onConfirm:()=>this._deleteCw(yid,cid)}); };
+  _deleteCw=async(yid,cid)=>{ await supabase.from('colorways').delete().eq('id',cid);
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
+  startEditCw=(yid,cid)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid); if(!cw) return;
+    this.setState({editingCw:cid,cwEditDraft:{color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:String(cw.grams)}}); };
+  cancelEditCw=()=>this.setState({editingCw:null,cwEditDraft:null});
+  setCwEditDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({cwEditDraft:{...s.cwEditDraft,[f]:v}})); };
+  setCwEditHex=(e)=>{ const v=e.target.value; this.setState(s=>({cwEditDraft:{...s.cwEditDraft,hex:v}})); };
+  saveEditCw=(yid,cid)=>async()=>{ const d=this.state.cwEditDraft; if(!d||!d.color.trim()) return;
+    const cols={color:d.color.trim(),hex:d.hex,dye_lot:d.dyeLot.trim(),grams:Number(d.grams)||0};
+    await supabase.from('colorways').update(cols).eq('id',cid);
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,color:cols.color,hex:cols.hex,dyeLot:cols.dye_lot,grams:cols.grams})}),editingCw:null,cwEditDraft:null})); };
+  // gestion des tags de marque
+  toggleManageBrands=()=>this.setState(s=>({manageBrands:!s.manageBrands}));
+  setNewBrand=(e)=>this.setState({newBrand:e.target.value});
+  addBrand=async()=>{ const b=this.state.newBrand.trim(); if(!b||this.state.brands.includes(b)){ this.setState({newBrand:''}); return; }
+    this.setState({newBrand:''}); await this.saveMeta({brands:[...this.state.brands,b]}); };
+  deleteBrand=(b)=>async()=>{ await this.saveMeta({brands:this.state.brands.filter(x=>x!==b)});
+    this.purgeFilterValue('stash','brand',b); };
 
   // ---- patterns ----
   openPattern=()=>this.setState({patternDialog:true,patternDraft:this.blankPattern(),patternEditId:null,patternOrigPath:''});
@@ -541,21 +574,34 @@ class App extends Component {
 
     const activeProjects=active.map(p=>({id:p.id,name:p.name,patternName:patName(p.patternId),thumbStyle:this.thumb(this.projHex(p,map)),yarnLine:yarnLine(p),yarnDot:yarnDot(p),since:since(p),open:this.editProject(p.id)}));
 
-    const stashRows=st.stash.map(y=>{
+    const stockBucket=(g)=>g<=0?'Épuisé':g<100?'< 100 g':g<300?'100–300 g':g<600?'300–600 g':'600 g +';
+    const stashRows=st.stash.filter(y=>
+      this.filterPass('stash','brand',y.brand||'Sans marque') &&
+      this.filterPass('stash','gps',y.gps?String(y.gps):'—') &&
+      this.filterPass('stash','stock',stockBucket(y.colorways.reduce((s,c)=>s+(c.grams-this.allocatedTo(c.id)),0)))
+    ).map(y=>{
       const colorways=y.colorways.map(cw=>{ const alloc=this.allocatedTo(cw.id); const avail=cw.grams-alloc;
         return {id:cw.id,color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:cw.grams,alloc,avail,
           skeins:y.gps?(avail/y.gps).toFixed(1):'0',allocLabel:alloc>0?`${alloc} g réservés`:'',
           swatch:`width:26px;height:26px;border-radius:50%;flex:none;background:${cw.hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12)`,
+          editing:st.editingCw===cw.id,startEdit:this.startEditCw(y.id,cw.id),saveEdit:this.saveEditCw(y.id,cw.id),
           setGrams:this.setCwGrams(y.id,cw.id),del:this.deleteCw(y.id,cw.id)}; });
       const totalAvail=colorways.reduce((s,c)=>s+c.avail,0);
       const totalSkeins=y.gps?(colorways.reduce((s,c)=>s+c.avail,0)/y.gps).toFixed(1):'0';
       return {id:y.id,brand:y.brand,name:y.name,blend:y.blend,mps:y.mps,gps:y.gps,colorways,
         totalAvail,totalSkeins,cwCount:y.colorways.length,
         expanded:st.expandedYarn===y.id,toggle:this.toggleYarn(y.id),del:this.deleteYarn(y.id),
-        editing:st.editingYarn===y.id,startEdit:this.startEditYarn(y.id),saveEdit:this.saveEditYarn(y.id),
-        addCwOpen:st.cwFor===y.id,startCw:this.startCw(y.id),addCw:this.addCw(y.id),
+        startEdit:this.openYarnEdit(y.id),
+        addCwOpen:st.cwFor===y.id,startCw:this.startCw(y.id),cancelCw:this.cancelCw,addCw:this.addCw(y.id),
         caret:`transition:transform .2s;transform:rotate(${st.expandedYarn===y.id?90:0}deg)`};
     });
+    const usedBrands=st.stash.map(y=>y.brand).filter(Boolean);
+    const allBrands=Array.from(new Set([...st.brands,...usedBrands]));
+    const manageBrandsList=allBrands.map(b=>({label:b,del:this.deleteBrand(b)}));
+    const usedGps=Array.from(new Set(st.stash.map(y=>y.gps).filter(Boolean))).sort((a,b)=>a-b).map(String);
+    const stockOptions=['Épuisé','< 100 g','100–300 g','300–600 g','600 g +'];
+    const stashFilterBtn=this.renderFilterButton('stash',['brand','gps','stock']);
+    const stashFilterPanel=this.renderFilterPanel('stash',[{dim:'brand',label:'Marque',options:allBrands},{dim:'gps',label:'g / pelote',options:usedGps},{dim:'stock',label:'Disponible',options:stockOptions}]);
 
     const usedCats=st.patterns.map(p=>p.category).filter(Boolean);
     const allCats=Array.from(new Set([...st.categories,...usedCats]));
@@ -638,13 +684,15 @@ class App extends Component {
       statCompleted:completed,statSkeins:gS.toFixed(1),statGrams:this.fmt(gG),statMeters:this.fmt(gM),
       statGramsShort:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0))+' g',
       activeCount:active.length,activeProjects,noActive:active.length===0,newProject:this.newProject,
-      stashRows,addYarnOpen:st.addYarnOpen,toggleAddYarn:this.toggleAddYarn,addYarn:this.addYarn,yd:st.yarnDraft,
+      stashRows,yarnDialog:st.yarnDialog,yarnEdit:!!st.yarnEditId,openYarnAdd:this.openYarnAdd,closeYarnDialog:this.closeYarnDialog,saveYarn:this.saveYarn,yd:st.yarnDraft,
       setYBrand:this.setYarnDraft('brand'),setYName:this.setYarnDraft('name'),setYMps:this.setYarnDraft('mps'),setYGps:this.setYarnDraft('gps'),
-      setYBlend:this.setYarnDraft('blend'),setYColor:this.setYarnDraft('color'),setYHex:this.setYarnDraft('hex'),setYDye:this.setYarnDraft('dyeLot'),setYGrams:this.setYarnDraft('grams'),
+      setYBlend:this.setYarnDraft('blend'),setYColor:this.setYarnDraft('color'),setYHex:this.setYarnDraftHex,setYDye:this.setYarnDraft('dyeLot'),setYGrams:this.setYarnDraft('grams'),
       cwDraft:st.cwDraft,setCwColor:this.setCwDraft('color'),setCwHex:this.setCwDraft('hex'),setCwDye:this.setCwDraft('dyeLot'),setCwGramsD:this.setCwDraft('grams'),
-      stashEmpty:st.stash.length===0,
-      yed:st.yarnEditDraft,cancelEditYarn:this.cancelEditYarn,
-      setYEBrand:this.setYarnEditDraft('brand'),setYEName:this.setYarnEditDraft('name'),setYEMps:this.setYarnEditDraft('mps'),setYEGps:this.setYarnEditDraft('gps'),setYEBlend:this.setYarnEditDraft('blend'),
+      cwEditDraft:st.cwEditDraft,cancelEditCw:this.cancelEditCw,
+      setCwEColor:this.setCwEditDraft('color'),setCwEHex:this.setCwEditHex,setCwEDye:this.setCwEditDraft('dyeLot'),setCwEGrams:this.setCwEditDraft('grams'),
+      stashEmpty:st.stash.length===0,stashFilteredEmpty:st.stash.length>0&&stashRows.length===0,
+      stashFilterBtn,stashFilterPanel,brandOptions:allBrands,
+      manageBrands:st.manageBrands,toggleManageBrands:this.toggleManageBrands,manageBrandsList,newBrand:st.newBrand,setNewBrand:this.setNewBrand,addBrand:this.addBrand,
       libraryFilterBtn,libraryFilterPanel,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
       manageTax:st.manageTax,toggleManageTax:this.toggleManageTax,manageCats,manageAuthors,
       newCategory:st.newCategory,setNewCategory:this.setNewCategory,addCategory:this.addCategory,
@@ -808,29 +856,28 @@ class App extends Component {
               <h1 style="margin:0;font-size:36px">Yarn Stash</h1>
               <p style="margin:6px 0 0" class="text-muted">Ta réserve de laine. Les grammes se mettent à jour quand tu associes une laine à un projet.</p>
             </div>
-            <button class="btn btn-primary" onClick=${v.toggleAddYarn}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une laine</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary" onClick=${v.toggleManageBrands} title="Gérer les marques"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Gérer</button>
+              ${v.stashFilterBtn}
+              <button class="btn btn-primary" onClick=${v.openYarnAdd}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une laine</button>
+            </div>
           </div>
+
+          ${v.stashFilterPanel}
+
+          ${v.manageBrands && html`
+            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:18px;animation:pop .2s ease both">
+              <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Marques</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                ${v.manageBrandsList.map(b=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${b.label}<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${b.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
+                ${v.manageBrandsList.length===0 && html`<span class="text-muted" style="font-size:12px">Aucune marque</span>`}
+              </div>
+              <div style="display:flex;gap:8px;max-width:320px"><input class="input" value=${v.newBrand} onInput=${v.setNewBrand} placeholder="ex. De Rerum Natura" onKeyDown=${(e)=>{if(e.key==='Enter')v.addBrand();}}/><button class="btn btn-primary" onClick=${v.addBrand}>Ajouter</button></div>
+            </div>`}
 
           <div class="stash-head" style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;padding:10px 18px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
             <div></div><div>Laine</div><div>Composition</div><div>Coloris</div><div>Disponible</div><div></div>
           </div>
-
-          ${v.addYarnOpen && html`
-            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:14px;animation:pop .2s ease both">
-              <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:14px">Nouvelle laine</div>
-              <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-                <div class="field"><label>Marque</label><input class="input" value=${v.yd.brand} onInput=${v.setYBrand} placeholder="De Rerum Natura"/></div>
-                <div class="field"><label>Nom</label><input class="input" value=${v.yd.name} onInput=${v.setYName} placeholder="Ulysse"/></div>
-                <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yd.mps} onInput=${v.setYMps} placeholder="185"/></div>
-                <div class="field"><label>Grammes / pelote</label><input class="input" type="number" value=${v.yd.gps} onInput=${v.setYGps} placeholder="50"/></div>
-                <div class="field" style="grid-column:1/3"><label>Composition (blend)</label><input class="input" value=${v.yd.blend} onInput=${v.setYBlend} placeholder="100% Mérinos"/></div>
-                <div class="field"><label>Coloris</label><input class="input" value=${v.yd.color} onInput=${v.setYColor} placeholder="Blé"/></div>
-                <div class="field"><label>Dye lot</label><input class="input" value=${v.yd.dyeLot} onInput=${v.setYDye} placeholder="A231"/></div>
-                <div class="field"><label>Couleur</label><input type="color" value=${v.yd.hex} onInput=${v.setYHex} style="width:100%;height:36px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-surface);cursor:pointer;display:block"/></div>
-                <div class="field"><label>Grammes en stock</label><input class="input" type="number" value=${v.yd.grams} onInput=${v.setYGrams} placeholder="400"/></div>
-                <div style="display:flex;align-items:flex-end;gap:8px;grid-column:3/5;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.toggleAddYarn}>Annuler</button><button class="btn btn-primary" onClick=${v.addYarn}>Ajouter au stash</button></div>
-              </div>
-            </div>`}
 
           <div style="display:flex;flex-direction:column;gap:10px">
             ${v.stashRows.map(y=>html`
@@ -846,44 +893,41 @@ class App extends Component {
                     <button class="btn btn-icon btn-ghost" onClick=${y.del} title="Supprimer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
                   </div>
                 </div>
-                ${y.editing && html`
-                  <div style="padding:4px 18px 18px;animation:pop .2s ease both">
-                    <div style="border-top:1px solid var(--color-divider);padding-top:14px">
-                      <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:12px">Modifier la laine</div>
-                      <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-                        <div class="field"><label>Marque</label><input class="input" value=${v.yed.brand} onInput=${v.setYEBrand}/></div>
-                        <div class="field"><label>Nom</label><input class="input" value=${v.yed.name} onInput=${v.setYEName}/></div>
-                        <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yed.mps} onInput=${v.setYEMps}/></div>
-                        <div class="field"><label>Grammes / pelote</label><input class="input" type="number" value=${v.yed.gps} onInput=${v.setYEGps}/></div>
-                        <div class="field" style="grid-column:1/3"><label>Composition (blend)</label><input class="input" value=${v.yed.blend} onInput=${v.setYEBlend}/></div>
-                        <div style="display:flex;align-items:flex-end;gap:8px;grid-column:3/5;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.cancelEditYarn}>Annuler</button><button class="btn btn-primary" onClick=${y.saveEdit}>Enregistrer</button></div>
-                      </div>
-                    </div>
-                  </div>`}
                 ${y.expanded && html`
                   <div style="padding:4px 18px 18px;animation:pop .2s ease both">
                     <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
-                      ${y.colorways.map(cw=>html`
-                        <div class="cw-row" style="display:grid;grid-template-columns:34px 1fr auto auto auto 40px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
-                          <div style=${cw.swatch}></div>
-                          <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
-                          <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
-                          <div style="display:flex;align-items:center;gap:6px"><input class="input" type="number" value=${cw.grams} onInput=${cw.setGrams} style="width:86px;text-align:right"/><span style="font-size:12px" class="text-muted">g total</span></div>
-                          <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
-                          <button class="btn btn-icon btn-ghost" onClick=${cw.del}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-                        </div>`)}
+                      ${y.colorways.map(cw=> cw.editing ? html`
+                          <div class="cw-form" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
+                            <div class="field" style="margin:0"><label>Couleur</label>${this.colorDot(v.cwEditDraft.hex,v.setCwEHex)}</div>
+                            <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwEditDraft.color} onInput=${v.setCwEColor}/></div>
+                            <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwEditDraft.dyeLot} onInput=${v.setCwEDye}/></div>
+                            <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwEditDraft.grams} onInput=${v.setCwEGrams}/></div>
+                            <div style="display:flex;gap:8px"><button class="btn btn-secondary" onClick=${v.cancelEditCw}>Annuler</button><button class="btn btn-primary" onClick=${cw.saveEdit}>Enregistrer</button></div>
+                          </div>` : html`
+                          <div class="cw-row" style="display:grid;grid-template-columns:34px 1fr auto auto auto 70px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
+                            <div style=${cw.swatch}></div>
+                            <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
+                            <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
+                            <div style="display:flex;align-items:center;gap:6px"><input class="input" type="number" value=${cw.grams} onInput=${cw.setGrams} style="width:86px;text-align:right"/><span style="font-size:12px" class="text-muted">g total</span></div>
+                            <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
+                            <div style="display:flex;gap:2px;justify-content:flex-end">
+                              <button class="btn btn-icon btn-ghost" onClick=${cw.startEdit} title="Modifier"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                              <button class="btn btn-icon btn-ghost" onClick=${cw.del} title="Supprimer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                            </div>
+                          </div>`)}
                       ${y.addCwOpen && html`
                         <div class="cw-form" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:10px 12px;border-radius:16px;border:1px dashed var(--color-accent)">
-                          <div class="field" style="margin:0"><label>Couleur</label><input type="color" value=${v.cwDraft.hex} onInput=${v.setCwHex} style="width:44px;height:36px;border:1px solid var(--color-divider);border-radius:999px;cursor:pointer;display:block"/></div>
+                          <div class="field" style="margin:0"><label>Couleur</label>${this.colorDot(v.cwDraft.hex,v.setCwHex)}</div>
                           <div class="field" style="margin:0"><label>Coloris</label><input class="input" value=${v.cwDraft.color} onInput=${v.setCwColor} placeholder="Sauge"/></div>
                           <div class="field" style="margin:0"><label>Dye lot</label><input class="input" value=${v.cwDraft.dyeLot} onInput=${v.setCwDye} placeholder="8533"/></div>
                           <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwDraft.grams} onInput=${v.setCwGramsD} placeholder="100"/></div>
-                          <button class="btn btn-primary" onClick=${y.addCw}>Ajouter</button>
+                          <div style="display:flex;gap:8px"><button class="btn btn-secondary" onClick=${y.cancelCw}>Annuler</button><button class="btn btn-primary" onClick=${y.addCw}>Ajouter</button></div>
                         </div>`}
                       ${this.addBtn('Ajouter un coloris / dye lot',y.startCw,'align-self:flex-start')}
                     </div>
                   </div>`}
               </div>`)}
+            ${v.stashFilteredEmpty && html`<div style="padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucune laine pour ce filtre.</div>`}
             ${v.stashEmpty && html`<div style="padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Ton stash est vide. Ajoute ta première laine.</div>`}
           </div>
         </section>
@@ -1219,6 +1263,36 @@ class App extends Component {
           <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.savePattern}>${v.patternEdit?'Enregistrer':'Ajouter'}</button></div>
         </div>
       </div>`}
+
+    ${v.yarnDialog && this.renderModal({title:v.yarnEdit?'Modifier la laine':'Nouvelle laine',width:520,onBackdrop:v.closeYarnDialog,
+      body:html`
+        <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:10px">Type de laine</div>
+        <div class="field"><label>Marque</label>
+          <select class="input" value=${v.yd.brand} onChange=${v.setYBrand}>
+            <option value="">—</option>
+            ${v.brandOptions.map(b=>html`<option value=${b}>${b}</option>`)}
+          </select>
+          <div style="display:flex;gap:6px;margin-top:6px"><input class="input" value=${v.newBrand} onInput=${v.setNewBrand} placeholder="Nouvelle marque…" style="font-size:13px" onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.addBrand();}}}/><button class="btn btn-icon btn-secondary" onClick=${v.addBrand} title="Ajouter la marque"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        </div>
+        <div class="field"><label>Nom</label><input class="input" value=${v.yd.name} onInput=${v.setYName} placeholder="Ulysse"/></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yd.mps} onInput=${v.setYMps} placeholder="185"/></div>
+          <div class="field"><label>Grammes / pelote</label><input class="input" type="number" value=${v.yd.gps} onInput=${v.setYGps} placeholder="50"/></div>
+        </div>
+        <div class="field"><label>Composition (blend)</label><input class="input" value=${v.yd.blend} onInput=${v.setYBlend} placeholder="100% Mérinos"/></div>
+        ${!v.yarnEdit && html`
+          <div style="border-top:1px solid var(--color-divider);margin:16px 0 14px;padding-top:14px">
+            <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:10px">Pelote / coloris</div>
+            <div style="display:flex;gap:12px;align-items:end;margin-bottom:12px">
+              ${this.colorDot(v.yd.hex,v.setYHex,44)}
+              <div class="field" style="margin:0;flex:1"><label>Coloris</label><input class="input" value=${v.yd.color} onInput=${v.setYColor} placeholder="Blé"/></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="field"><label>Dye lot</label><input class="input" value=${v.yd.dyeLot} onInput=${v.setYDye} placeholder="A231"/></div>
+              <div class="field"><label>Grammes en stock</label><input class="input" type="number" value=${v.yd.grams} onInput=${v.setYGrams} placeholder="400"/></div>
+            </div>
+          </div>`}`,
+      actions:html`<button class="btn btn-secondary" onClick=${v.closeYarnDialog}>Annuler</button><button class="btn btn-primary" onClick=${v.saveYarn}>${v.yarnEdit?'Enregistrer':'Ajouter au stash'}</button>`})}
 
     ${v.needleDialog && this.renderModal({title:v.needleEdit?"Modifier l'aiguille":'Nouvelle aiguille',width:440,onBackdrop:v.closeNeedleDialog,
       body:html`
