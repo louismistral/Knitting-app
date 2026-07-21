@@ -1,73 +1,73 @@
-# Maille — App de tricot 🧶
+# Maille — version « Organic »
 
-Application mobile-first pour gérer ton tricot : patrons, stock de laine et projets.
-Les données sont **synchronisées via Supabase** (compte email + mot de passe), donc
-accessibles depuis tous tes appareils. Les fichiers (patrons PDF/PNG, photos) sont
-stockés dans Supabase Storage.
+Version de l'app **importée depuis Claude Design** (projet _Knitting project tracker app_,
+fichier `Maille.dc.html`, système de design **Organic**). Isolée sur sa propre branche
+(`claude/maille-organic`) pour devenir la version principale du projet.
 
-## Deux versions dans ce repo
+> Historique : à l'origine cette version vivait sous `public/maille-organic/` dans le
+> même dépôt que l'app React (branche `claude/maille`), copiée telle quelle dans le
+> build par Vite. Elle a été déplacée à la racine de sa propre branche pour être
+> déployée et développée indépendamment.
 
-On garde volontairement **deux versions** de l'app, côte à côte (dossiers, pas branches —
-comme ça on peut voir et comparer les deux à tout moment) :
+## Ce que c'est
 
-| Version | Emplacement | Techno | Données | URL déployée |
-| --- | --- | --- | --- | --- |
-| **Principale** (celle décrite ci-dessous) | racine du repo (`src/`, `index.html`) | React + Vite + Supabase | Supabase (projet `maille-knitting`, en pause) | `…/<repo>/` |
-| **Organic** (design importé de Claude Design) | [`public/maille-organic/`](public/maille-organic/) | HTML + Preact/htm, sans build | Supabase (projet dédié `maille-organic`, multi-utilisateurs) | `…/<repo>/maille-organic/` |
+Une reprise fidèle du prototype, en application autonome :
 
-La version Organic est autonome et n'affecte pas la version principale ; voir son
-[README dédié](public/maille-organic/README.md).
+- **Sans build** : HTML + CSS + des modules JS. Rien à compiler.
+- **Multi-utilisateurs, avec compte** : auth par email/mot de passe (Supabase Auth).
+  Chaque utilisateur a ses propres laines, patrons et projets — isolés par des
+  règles RLS Postgres (personne ne peut lire les données d'un autre).
+- **Backend dédié** : un projet Supabase séparé de l'app React principale
+  (`maille-organic`, pas `maille-knitting`), pour ne pas mélanger les deux
+  modèles de données.
+- **Autonome** : [Preact](https://preactjs.com/), [htm](https://github.com/developit/htm)
+  et `@supabase/supabase-js` (bundlé nous-mêmes avec esbuild, les CDN publics
+  étant bloqués dans certains environnements) sont embarqués dans `vendor/`.
 
-## Démarrer
+Zones : Accueil · Bibliothèque · Yarn Stash · Projets (+ détail) · Profil — avec le même
+lien laine ↔ projet que la version principale (les grammes utilisés sont déduits du stash,
+calculés à la volée à partir des allocations, jamais stockés en double).
+
+## Backend Supabase
+
+Projet dédié **`maille-organic`** (org `louismistral's Org`, région `eu-west-3`).
+
+- **Tables** : `yarns`, `colorways` (coloris/dye lots d'une laine), `patterns`,
+  `projects`, `project_allocations` (laine ↔ projet), `project_photos`. Chaque
+  table a une colonne `user_id` et une policy RLS `user_id = auth.uid()`.
+- **Storage** : buckets privés `patterns` et `photos`, fichiers rangés sous
+  `<user_id>/...` ; policies RLS sur `storage.objects` limitées à ce dossier.
+  L'app affiche les fichiers via des URLs signées (1h, régénérées au besoin).
+- **Auth** : email + mot de passe. Par défaut, Supabase exige une confirmation
+  par email avant la première connexion. Pour un flux sans friction (comme
+  l'app principale), désactive **Confirm email** dans
+  **Supabase → Authentication → Sign In / Providers → Email** du projet
+  `maille-organic`.
+- La clé publique dans `supabaseClient.js` (`sb_publishable_...`) est sans
+  danger à exposer : elle ne donne accès à rien sans passer par les policies RLS.
+
+## Fichiers
+
+| Fichier | Rôle |
+| --- | --- |
+| `index.html` | Point d'entrée |
+| `styles.css` | Tokens et composants du design system Organic (importés tels quels) + extras du prototype + responsive mobile |
+| `app.js` | Logique + rendu (portage du `Maille.dc.html`, template `{{ }}`/`sc-for`/`sc-if` réécrit en htm) + auth et CRUD Supabase |
+| `supabaseClient.js` | Client Supabase (URL + clé publique du projet `maille-organic`) |
+| `vendor/` | Preact, htm et `@supabase/supabase-js` embarqués |
+
+## Lancer
+
+C'est du statique : ouvre `index.html` via n'importe quel serveur local, p. ex.
 
 ```bash
-npm install
-npm run dev      # serveur de dev sur http://localhost:5173
-npm run build    # build de production dans dist/
-npm run preview  # prévisualiser le build
+python3 -m http.server 8000   # puis http://localhost:8000/
 ```
 
-La config Supabase est dans `.env` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`).
-La clé `sb_publishable_...` est publique par conception : l'accès aux données est
-protégé par les règles RLS de Postgres (chaque utilisateur ne voit que ses lignes).
+## Déploiement
 
-## Déploiement (GitHub Pages)
-
-Le workflow `.github/workflows/deploy.yml` compile l'app et la publie à chaque push.
-Dans **Settings → Pages**, mets la source sur **GitHub Actions**. L'app sera servie à
-`https://<user>.github.io/<repo>/` (routage par hash, chemins d'assets relatifs).
-
-Pour que l'inscription fonctionne sans lien de confirmation par email, désactive
-**Confirm email** dans **Supabase → Authentication → Sign In / Providers → Email**.
-
-## Base de données
-
-Tables (Postgres, RLS activé) : `patterns`, `yarns`, `projects`, `project_yarns`
-(associations laine↔projet), `project_photos`. La réconciliation du stock se fait
-côté serveur via les fonctions `set_allocation` / `remove_allocation` (atomiques).
-
-## Les 5 zones
-
-| Zone | Rôle |
-| --- | --- |
-| 🏠 **Accueil** | Carte résumé (projets terminés, pelotes / grammes / mètres utilisés) + accès rapide aux projets en cours |
-| 📚 **Bibliothèque** | Répertorier les patrons (PDF ou image), classés par catégorie et auteur, associables aux projets |
-| 🧶 **Yarn Stash** | Base de laines (marque, nom, m/pelote, g/pelote, grammes en stock, pelotes auto, blend, couleur, dye lot, photo) |
-| 🧵 **Projets** | Projets actifs et terminés : patron, taille, gauge, aiguilles, dates, laines, notes, photos |
-| 👤 **Profil** | Prénom, résumé et réinitialisation des données |
-
-## Le lien laine ↔ projet
-
-Chaque laine du stash a une quantité en grammes. Quand tu associes une laine à un
-projet et indiques les grammes utilisés, cette quantité est **retirée du stash**.
-Si tu réduis la quantité utilisée (par ex. de 1000 g à 800 g), les 200 g restants
-**retournent automatiquement au stash**. Supprimer un projet ou une association
-rend aussi les grammes réservés.
-
-Une même laine de base (marque → composition) peut exister en plusieurs couleurs /
-dye lots : utilise **Dupliquer (autre couleur)** depuis une fiche laine.
-
-## Stack
-
-React + TypeScript + Vite, Zustand (état + persistance), React Router. Stockage
-fichiers via IndexedDB.
+Pas de build : le workflow `.github/workflows/deploy.yml` de cette branche publie les
+fichiers tels quels sur GitHub Pages à chaque push. Tant que `claude/maille-organic`
+n'est pas la branche par défaut du dépôt, la version reste accessible via son propre
+lien de prévisualisation ; une fois passée en branche par défaut, elle sera servie à
+`https://<user>.github.io/<repo>/`.
