@@ -1,10 +1,13 @@
 import { Link } from 'react-router-dom'
 import { useStore, gramsToMeters } from '../store'
 import { Thumb } from '../components/FileView'
+import { useAuth } from '../auth'
 
 export function Home() {
   const projects = useStore((s) => s.projects)
   const yarns = useStore((s) => s.yarns)
+  const { session } = useAuth()
+  const name = ((session?.user.user_metadata?.full_name as string) ?? '').trim()
 
   const completed = projects.filter((p) => p.endDate)
   const active = projects.filter((p) => !p.endDate)
@@ -28,7 +31,7 @@ export function Home() {
 
   return (
     <div className="screen">
-      <div className="screen-title">Bonjour 👋</div>
+      <div className="screen-title">Bonjour{name ? ` ${name}` : ''} 👋</div>
       <p className="subtitle">Voici un résumé de ton tricot.</p>
 
       <div className="section-label">Statistiques</div>

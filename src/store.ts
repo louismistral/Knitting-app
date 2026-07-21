@@ -3,6 +3,49 @@ import type { Pattern, Project, Yarn, FileRef } from './types'
 import { supabase } from './supabase'
 import { removeFile } from './files'
 
+// ---- Custom tags (categories / authors / brands) ----
+// These universes are seeded from existing rows, plus any custom tags the user
+// created that aren't attached to anything yet. The custom part is persisted
+// locally so freshly-created (still unused) tags survive a reload.
+
+export type TagKind = 'patternCategory' | 'patternAuthor' | 'yarnBrand'
+
+export interface CustomTags {
+  patternCategory: string[]
+  patternAuthor: string[]
+  yarnBrand: string[]
+}
+
+const TAGS_KEY = 'maille.customTags'
+
+function loadCustomTags(): CustomTags {
+  const empty: CustomTags = { patternCategory: [], patternAuthor: [], yarnBrand: [] }
+  try {
+    const raw = JSON.parse(localStorage.getItem(TAGS_KEY) ?? '{}')
+    return {
+      patternCategory: Array.isArray(raw.patternCategory) ? raw.patternCategory : [],
+      patternAuthor: Array.isArray(raw.patternAuthor) ? raw.patternAuthor : [],
+      yarnBrand: Array.isArray(raw.yarnBrand) ? raw.yarnBrand : [],
+    }
+  } catch {
+    return empty
+  }
+}
+
+function persistCustomTags(t: CustomTags) {
+  try {
+    localStorage.setItem(TAGS_KEY, JSON.stringify(t))
+  } catch {
+    /* ignore quota / private-mode errors */
+  }
+}
+
+function uniqSorted(values: string[]): string[] {
+  return Array.from(new Set(values.filter((v) => v.trim() !== ''))).sort((a, b) =>
+    a.localeCompare(b, 'fr', { sensitivity: 'base' }),
+  )
+}
+
 // ---- Row <-> model mapping ----
 
 interface PatternRow {
@@ -75,6 +118,11 @@ function toYarn(r: YarnRow): Yarn {
   }
 }
 function toProject(r: ProjectRow): Project {
+  // Merge any duplicate allocations that reference the same yarn (sum their grams).
+  const mergedYarns = new Map<string, number>()
+  for (const a of r.project_yarns ?? []) {
+    mergedYarns.set(a.yarn_id, (mergedYarns.get(a.yarn_id) ?? 0) + Number(a.grams_used))
+  }
   return {
     id: r.id,
     name: r.name,
@@ -85,7 +133,7 @@ function toProject(r: ProjectRow): Project {
     startDate: r.start_date,
     endDate: r.end_date,
     notes: r.notes,
-    yarns: (r.project_yarns ?? []).map((a) => ({ yarnId: a.yarn_id, gramsUsed: Number(a.grams_used) })),
+    yarns: [...mergedYarns].map(([yarnId, gramsUsed]) => ({ yarnId, gramsUsed })),
     photos: (r.project_photos ?? []).map((p) => ({
       bucket: 'photos' as const,
       path: p.path,
@@ -101,11 +149,20 @@ interface State {
   patterns: Pattern[]
   yarns: Yarn[]
   projects: Project[]
+  customTags: CustomTags
 
   load: () => Promise<void>
   reset: () => void
 
+  // Managed tag universes (category / author / brand).
+  addTag: (kind: TagKind, value: string) => void
+  deleteTag: (kind: TagKind, value: string) => Promise<void>
+
   addPattern: (p: { name: string; author: string; category: string; file: FileRef | null }) => Promise<void>
+  updatePattern: (
+    id: string,
+    patch: Partial<{ name: string; author: string; category: string; file: FileRef | null }>,
+  ) => Promise<void>
   deletePattern: (id: string) => Promise<void>
 
   addYarn: (y: Omit<Yarn, 'id' | 'createdAt'>) => Promise<void>
@@ -129,6 +186,7 @@ export const useStore = create<State>()((set, get) => ({
   patterns: [],
   yarns: [],
   projects: [],
+  customTags: loadCustomTags(),
 
   load: async () => {
     const [pats, yrns, projs] = await Promise.all([
@@ -149,6 +207,46 @@ export const useStore = create<State>()((set, get) => ({
 
   reset: () => set({ patterns: [], yarns: [], projects: [], loaded: false }),
 
+  addTag: (kind, value) => {
+    const v = value.trim()
+    if (!v) return
+    set((s) => {
+      if (s.customTags[kind].some((t) => t.toLowerCase() === v.toLowerCase())) return s
+      const customTags = { ...s.customTags, [kind]: [...s.customTags[kind], v] }
+      persistCustomTags(customTags)
+      return { customTags }
+    })
+  },
+  deleteTag: async (kind, value) => {
+    const v = value.trim()
+    if (!v) return
+    const eq = (a: string) => a.trim().toLowerCase() === v.toLowerCase()
+
+    // Detach the tag from every entity that still uses it.
+    if (kind === 'patternCategory') {
+      for (const p of get().patterns.filter((x) => eq(x.category))) {
+        await get().updatePattern(p.id, { category: '' })
+      }
+    } else if (kind === 'patternAuthor') {
+      for (const p of get().patterns.filter((x) => eq(x.author))) {
+        await get().updatePattern(p.id, { author: '' })
+      }
+    } else if (kind === 'yarnBrand') {
+      for (const y of get().yarns.filter((x) => eq(x.brand))) {
+        await get().updateYarn(y.id, { brand: '' })
+      }
+    }
+
+    set((s) => {
+      const customTags = {
+        ...s.customTags,
+        [kind]: s.customTags[kind].filter((t) => !eq(t)),
+      }
+      persistCustomTags(customTags)
+      return { customTags }
+    })
+  },
+
   addPattern: async (p) => {
     const { data } = await supabase
       .from('patterns')
@@ -163,6 +261,24 @@ export const useStore = create<State>()((set, get) => ({
       .select('*')
       .single()
     if (data) set((s) => ({ patterns: [toPattern(data), ...s.patterns] }))
+  },
+  updatePattern: async (id, patch) => {
+    const current = get().patterns.find((x) => x.id === id)
+    // If the pattern file is being replaced/removed, clean up the old one.
+    if ('file' in patch && current?.file && current.file.path !== patch.file?.path) {
+      await removeFile(current.file)
+    }
+    const cols: Record<string, unknown> = {}
+    if (patch.name !== undefined) cols.name = patch.name
+    if (patch.author !== undefined) cols.author = patch.author
+    if (patch.category !== undefined) cols.category = patch.category
+    if ('file' in patch) {
+      cols.file_path = patch.file?.path ?? null
+      cols.file_name = patch.file?.name ?? null
+      cols.file_type = patch.file?.type ?? null
+    }
+    await supabase.from('patterns').update(cols).eq('id', id)
+    set((s) => ({ patterns: s.patterns.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))
   },
   deletePattern: async (id) => {
     const p = get().patterns.find((x) => x.id === id)
@@ -346,6 +462,15 @@ export const useStore = create<State>()((set, get) => ({
 }))
 
 // ---- Derived helpers ----
+
+/** All known values for a tag universe: those in use + custom (still-unused) ones. */
+export function tagUniverse(state: State, kind: TagKind): string[] {
+  let inUse: string[] = []
+  if (kind === 'patternCategory') inUse = state.patterns.map((p) => p.category)
+  else if (kind === 'patternAuthor') inUse = state.patterns.map((p) => p.author)
+  else if (kind === 'yarnBrand') inUse = state.yarns.map((y) => y.brand)
+  return uniqSorted([...inUse, ...state.customTags[kind]])
+}
 
 export function skeinsInStash(y: Yarn): number {
   if (!y.gramsPerSkein) return 0

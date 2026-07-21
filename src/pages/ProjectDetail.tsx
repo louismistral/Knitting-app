@@ -1,10 +1,35 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useStore, gramsToMeters } from '../store'
 import { uploadFile } from '../files'
-import type { FileRef } from '../types'
+import type { FileRef, Project } from '../types'
 import { Thumb, PatternPreview, useFileUrl } from '../components/FileView'
 import { Modal } from '../components/Modal'
+import { registerNavGuard, runNavGuard } from '../navGuard'
+
+interface Draft {
+  name: string
+  size: string
+  gauge: number | null
+  needleSize: number | null
+  startDate: string | null
+  endDate: string | null
+  notes: string
+  patternId: string | null
+}
+
+function toDraft(p: Project): Draft {
+  return {
+    name: p.name,
+    size: p.size,
+    gauge: p.gauge,
+    needleSize: p.needleSize,
+    startDate: p.startDate,
+    endDate: p.endDate,
+    notes: p.notes,
+    patternId: p.patternId,
+  }
+}
 
 export function ProjectDetail() {
   const { id } = useParams()
@@ -23,9 +48,35 @@ export function ProjectDetail() {
 
   const [pickYarn, setPickYarn] = useState(false)
   const [pickPattern, setPickPattern] = useState(false)
+  const [draft, setDraft] = useState<Draft | null>(project ? toDraft(project) : null)
+  const [dirty, setDirty] = useState(false)
+  const [leavePrompt, setLeavePrompt] = useState<{ resolve: (v: boolean) => void } | null>(null)
   const photoInput = useRef<HTMLInputElement>(null)
 
-  if (!project) {
+  // Re-seed the draft only when we navigate to a different project.
+  useEffect(() => {
+    if (project) {
+      setDraft(toDraft(project))
+      setDirty(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  // Keep the nav guard in sync with the latest dirty state / save handler.
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+
+  useEffect(() => {
+    registerNavGuard(async () => {
+      if (!dirtyRef.current) return true
+      return new Promise<boolean>((resolve) => setLeavePrompt({ resolve }))
+    })
+    return () => registerNavGuard(null)
+  }, [])
+
+  if (!project || !draft) {
     return (
       <div className="screen">
         <p>Projet introuvable.</p>
@@ -33,9 +84,60 @@ export function ProjectDetail() {
     )
   }
 
-  const pattern = patterns.find((p) => p.id === project.patternId) ?? null
+  const pattern = patterns.find((p) => p.id === draft.patternId) ?? null
   const yarnById = new Map(yarns.map((y) => [y.id, y]))
   const availableYarns = yarns.filter((y) => !project.yarns.some((a) => a.yarnId === y.id))
+
+  function field<K extends keyof Draft>(key: K, value: Draft[K]) {
+    setDraft((d) => (d ? { ...d, [key]: value } : d))
+    setDirty(true)
+  }
+
+  function patch(d: Draft): Partial<Project> {
+    return {
+      name: d.name,
+      size: d.size,
+      gauge: d.gauge,
+      needleSize: d.needleSize,
+      startDate: d.startDate,
+      endDate: d.endDate,
+      notes: d.notes,
+      patternId: d.patternId,
+    }
+  }
+
+  async function save() {
+    const d = draftRef.current
+    if (!d) return
+    await update(project!.id, patch(d))
+    setDirty(false)
+  }
+
+  async function onFinish() {
+    const today = new Date().toISOString().slice(0, 10)
+    const d = { ...draftRef.current!, endDate: today }
+    await update(project!.id, patch(d))
+    await finish(project!.id)
+    setDraft(d)
+    setDirty(false)
+  }
+
+  async function onReopen() {
+    const d = { ...draftRef.current!, endDate: null }
+    await update(project!.id, patch(d))
+    await reopen(project!.id)
+    setDraft(d)
+    setDirty(false)
+  }
+
+  async function goBack() {
+    if (await runNavGuard()) nav(-1)
+  }
+
+  function answerLeave(proceed: boolean) {
+    leavePrompt?.resolve(proceed)
+    setLeavePrompt(null)
+  }
 
   async function onAddPhotos(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
@@ -46,29 +148,30 @@ export function ProjectDetail() {
   }
 
   return (
-    <div className="screen">
+    <div className="screen with-footer">
       <div className="appbar">
-        <button className="back" onClick={() => nav(-1)}>
+        <button className="back" onClick={goBack}>
           ‹
         </button>
-        <h1>{project.name || 'Projet'}</h1>
-        <span className={`chip ${project.endDate ? 'done' : 'active'}`}>
-          {project.endDate ? 'Terminé' : 'En cours'}
+        <h1>{draft.name || 'Projet'}</h1>
+        <span className={`chip ${draft.endDate ? 'done' : 'active'}`}>
+          {draft.endDate ? 'Terminé' : 'En cours'}
         </span>
       </div>
 
-      {/* Basic info */}
+      {/* 1 — Infos */}
+      <div className="section-label">Informations</div>
       <div className="card">
         <div className="field">
           <label>Nom</label>
-          <input value={project.name} onChange={(e) => update(project.id, { name: e.target.value })} />
+          <input value={draft.name} onChange={(e) => field('name', e.target.value)} />
         </div>
         <div className="row">
           <div className="field">
             <label>Taille</label>
             <input
-              value={project.size}
-              onChange={(e) => update(project.id, { size: e.target.value })}
+              value={draft.size}
+              onChange={(e) => field('size', e.target.value)}
               placeholder="M"
             />
           </div>
@@ -76,8 +179,8 @@ export function ProjectDetail() {
             <label>Gauge (m. / 10cm)</label>
             <input
               inputMode="decimal"
-              value={project.gauge ?? ''}
-              onChange={(e) => update(project.id, { gauge: parseNum(e.target.value) })}
+              value={draft.gauge ?? ''}
+              onChange={(e) => field('gauge', parseNum(e.target.value))}
               placeholder="22"
             />
           </div>
@@ -87,8 +190,8 @@ export function ProjectDetail() {
             <label>Aiguilles (mm)</label>
             <input
               inputMode="decimal"
-              value={project.needleSize ?? ''}
-              onChange={(e) => update(project.id, { needleSize: parseNum(e.target.value) })}
+              value={draft.needleSize ?? ''}
+              onChange={(e) => field('needleSize', parseNum(e.target.value))}
               placeholder="4"
             />
           </div>
@@ -96,35 +199,50 @@ export function ProjectDetail() {
             <label>Début</label>
             <input
               type="date"
-              value={project.startDate ?? ''}
-              onChange={(e) => update(project.id, { startDate: e.target.value || null })}
+              value={draft.startDate ?? ''}
+              onChange={(e) => field('startDate', e.target.value || null)}
             />
           </div>
         </div>
-        {project.endDate && (
+        {draft.endDate && (
           <div className="field">
             <label>Fin</label>
             <input
               type="date"
-              value={project.endDate}
-              onChange={(e) => update(project.id, { endDate: e.target.value || null })}
+              value={draft.endDate}
+              onChange={(e) => field('endDate', e.target.value || null)}
             />
           </div>
         )}
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Notes</label>
+          <textarea
+            value={draft.notes}
+            onChange={(e) => field('notes', e.target.value)}
+            placeholder="Modifications, rangs, idées…"
+          />
+        </div>
       </div>
 
-      {/* Pattern */}
+      {/* 2 — Patron */}
       <div className="section-label">Patron</div>
       {pattern ? (
         <div className="card" style={{ padding: 10 }}>
-          <Link to={`/library/${pattern.id}`}>
-            <PatternPreview file={pattern.file} />
-          </Link>
+          <PatternPreview file={pattern.file} />
+          <div className="li-title" style={{ marginTop: 8 }}>
+            {pattern.name}
+          </div>
+          <div className="li-sub">
+            {[pattern.author, pattern.category].filter(Boolean).join(' · ') || 'Sans catégorie'}
+          </div>
           <div className="row" style={{ marginTop: 10 }}>
+            <Link className="btn ghost sm" to={`/library/${pattern.id}`} style={{ flex: 1 }}>
+              Ouvrir
+            </Link>
             <button className="btn ghost sm" onClick={() => setPickPattern(true)}>
               Changer
             </button>
-            <button className="btn ghost sm" onClick={() => update(project.id, { patternId: null })}>
+            <button className="btn ghost sm" onClick={() => field('patternId', null)}>
               Retirer
             </button>
           </div>
@@ -135,8 +253,8 @@ export function ProjectDetail() {
         </button>
       )}
 
-      {/* Yarn */}
-      <div className="section-label">Laine utilisée</div>
+      {/* 3 — Laines associées */}
+      <div className="section-label">Laines associées</div>
       {project.yarns.length === 0 && (
         <p className="hint" style={{ marginBottom: 8 }}>
           Associe de la laine de ton stash. Les grammes indiqués sont retirés du stash ; si tu en
@@ -192,15 +310,7 @@ export function ProjectDetail() {
         🧶 Ajouter de la laine
       </button>
 
-      {/* Notes */}
-      <div className="section-label">Notes</div>
-      <textarea
-        value={project.notes}
-        onChange={(e) => update(project.id, { notes: e.target.value })}
-        placeholder="Modifications, rangs, idées…"
-      />
-
-      {/* Photos */}
+      {/* 4 — Photos */}
       <div className="section-label">Photos</div>
       <div className="photo-strip">
         <button className="add-photo" onClick={() => photoInput.current?.click()}>
@@ -223,23 +333,13 @@ export function ProjectDetail() {
         style={{ display: 'none' }}
       />
 
-      {/* Actions */}
-      <div className="fab-row">
-        {project.endDate ? (
-          <button className="btn ghost block" onClick={() => reopen(project.id)}>
-            ↩︎ Rouvrir le projet
-          </button>
-        ) : (
-          <button className="btn block" onClick={() => finish(project.id)}>
-            ✓ J'ai fini le projet
-          </button>
-        )}
-      </div>
+      {/* Danger zone */}
       <div className="fab-row">
         <button
           className="btn danger block"
           onClick={() => {
             if (confirm('Supprimer ce projet ? La laine réservée retournera au stash.')) {
+              registerNavGuard(null)
               del(project.id)
               nav('/projects')
             }
@@ -248,6 +348,54 @@ export function ProjectDetail() {
           Supprimer le projet
         </button>
       </div>
+
+      {/* Always-visible action overlay */}
+      <div className="project-footer">
+        <button className="btn ghost" disabled={!dirty} onClick={save}>
+          {dirty ? '💾 Enregistrer' : '✓ Enregistré'}
+        </button>
+        {draft.endDate ? (
+          <button className="btn" onClick={onReopen}>
+            ↩︎ Rouvrir
+          </button>
+        ) : (
+          <button className="btn" onClick={onFinish}>
+            ✓ Terminé
+          </button>
+        )}
+      </div>
+
+      {leavePrompt && (
+        <Modal title="Modifications non enregistrées" onClose={() => answerLeave(false)}>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Tu as des changements non enregistrés sur ce projet. Que veux-tu faire ?
+          </p>
+          <button
+            className="btn block"
+            style={{ marginTop: 8 }}
+            onClick={async () => {
+              await save()
+              answerLeave(true)
+            }}
+          >
+            💾 Enregistrer et quitter
+          </button>
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 8 }}
+            onClick={() => answerLeave(true)}
+          >
+            Quitter sans enregistrer
+          </button>
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 8 }}
+            onClick={() => answerLeave(false)}
+          >
+            Annuler
+          </button>
+        </Modal>
+      )}
 
       {pickPattern && (
         <Modal title="Choisir un patron" onClose={() => setPickPattern(false)}>
@@ -258,7 +406,7 @@ export function ProjectDetail() {
               className="list-item"
               style={{ width: '100%', textAlign: 'left' }}
               onClick={() => {
-                update(project.id, { patternId: p.id })
+                field('patternId', p.id)
                 setPickPattern(false)
               }}
             >

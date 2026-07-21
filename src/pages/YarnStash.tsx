@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { useStore, skeinsInStash } from '../store'
+import { useStore, skeinsInStash, tagUniverse } from '../store'
 import { uploadFile } from '../files'
 import type { FileRef, Yarn } from '../types'
 import { Thumb } from '../components/FileView'
 import { Modal } from '../components/Modal'
+import { TagPicker } from '../components/TagPicker'
 
 const EMPTY: YarnForm = {
   brand: '',
@@ -32,10 +33,13 @@ interface YarnForm {
 export function YarnStash() {
   const yarns = useStore((s) => s.yarns)
   const addYarn = useStore((s) => s.addYarn)
+  const brands = useStore((s) => tagUniverse(s, 'yarnBrand'))
   const [editing, setEditing] = useState<Yarn | null>(null)
   const [prefill, setPrefill] = useState<YarnForm | null>(null)
+  const [brandFilter, setBrandFilter] = useState('')
 
   const totalGrams = yarns.reduce((n, y) => n + y.gramsInStash, 0)
+  const shown = brandFilter ? yarns.filter((y) => y.brand === brandFilter) : yarns
 
   return (
     <div className="screen">
@@ -43,6 +47,31 @@ export function YarnStash() {
       <p className="subtitle">
         {yarns.length} laine{yarns.length > 1 ? 's' : ''} · {Math.round(totalGrams)} g en stock
       </p>
+
+      {brands.length > 0 && (
+        <div className="filter-row">
+          <span className="filter-label">Marque</span>
+          <div className="photo-strip">
+            <button
+              className={`chip ${!brandFilter ? 'active' : ''}`}
+              style={{ border: 'none' }}
+              onClick={() => setBrandFilter('')}
+            >
+              Toutes
+            </button>
+            {brands.map((b) => (
+              <button
+                key={b}
+                className={`chip ${brandFilter === b ? 'active' : ''}`}
+                style={{ border: 'none' }}
+                onClick={() => setBrandFilter(brandFilter === b ? '' : b)}
+              >
+                {b}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Inline add row */}
       <button
@@ -59,13 +88,13 @@ export function YarnStash() {
 
       <div style={{ height: 12 }} />
 
-      {yarns.length === 0 ? (
+      {shown.length === 0 ? (
         <div className="empty">
           <div className="emoji">🧶</div>
-          <p>Ton stash est vide.</p>
+          <p>{yarns.length === 0 ? 'Ton stash est vide.' : 'Aucune laine pour cette marque.'}</p>
         </div>
       ) : (
-        yarns.map((y) => (
+        shown.map((y) => (
           <button
             key={y.id}
             className="list-item"
@@ -180,15 +209,17 @@ function YarnModal({
 
   return (
     <Modal title={yarn ? 'Modifier la laine' : 'Nouvelle laine'} onClose={onClose}>
-      <div className="row">
-        <div className="field">
-          <label>Marque</label>
-          <input value={f.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Tilia" />
-        </div>
-        <div className="field">
-          <label>Nom</label>
-          <input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Merino" />
-        </div>
+      <TagPicker
+        kind="yarnBrand"
+        label="Marque"
+        value={f.brand}
+        onChange={(v) => set('brand', v)}
+        placeholder="Tilia"
+      />
+
+      <div className="field">
+        <label>Nom</label>
+        <input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Merino" />
       </div>
 
       <div className="row">

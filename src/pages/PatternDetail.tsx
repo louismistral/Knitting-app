@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useStore } from '../store'
 import { PatternPreview } from '../components/FileView'
+import { PatternModal } from '../components/PatternModal'
 
 export function PatternDetail() {
   const { id } = useParams()
@@ -8,6 +10,7 @@ export function PatternDetail() {
   const pattern = useStore((s) => s.patterns.find((p) => p.id === id))
   const projects = useStore((s) => s.projects.filter((p) => p.patternId === id))
   const deletePattern = useStore((s) => s.deletePattern)
+  const [editing, setEditing] = useState(false)
 
   if (!pattern) {
     return (
@@ -24,6 +27,9 @@ export function PatternDetail() {
           ‹
         </button>
         <h1>{pattern.name}</h1>
+        <button className="btn ghost sm" style={{ flex: '0 0 auto' }} onClick={() => setEditing(true)}>
+          Modifier
+        </button>
       </div>
 
       <div className="card" style={{ padding: 10 }}>
@@ -69,6 +75,8 @@ export function PatternDetail() {
           Supprimer le patron
         </button>
       </div>
+
+      {editing && <PatternModal pattern={pattern} onClose={() => setEditing(false)} />}
     </div>
   )
 }

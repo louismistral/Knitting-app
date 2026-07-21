@@ -1,19 +1,20 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useStore } from '../store'
-import { uploadFile } from '../files'
-import type { FileRef } from '../types'
+import { useStore, tagUniverse } from '../store'
 import { Thumb } from '../components/FileView'
-import { Modal } from '../components/Modal'
+import { PatternModal } from '../components/PatternModal'
 
 export function Library() {
   const patterns = useStore((s) => s.patterns)
-  const addPattern = useStore((s) => s.addPattern)
+  const categories = useStore((s) => tagUniverse(s, 'patternCategory'))
+  const authors = useStore((s) => tagUniverse(s, 'patternAuthor'))
   const [adding, setAdding] = useState(false)
-  const [filter, setFilter] = useState('')
+  const [cat, setCat] = useState('')
+  const [author, setAuthor] = useState('')
 
-  const categories = Array.from(new Set(patterns.map((p) => p.category).filter(Boolean)))
-  const shown = filter ? patterns.filter((p) => p.category === filter) : patterns
+  const shown = patterns.filter(
+    (p) => (!cat || p.category === cat) && (!author || p.author === author),
+  )
 
   return (
     <div className="screen">
@@ -21,31 +22,16 @@ export function Library() {
       <p className="subtitle">Tes patrons de tricot, classés et prêts à tricoter.</p>
 
       {categories.length > 0 && (
-        <div className="photo-strip" style={{ marginBottom: 14 }}>
-          <button
-            className={`chip ${!filter ? 'active' : ''}`}
-            style={{ border: 'none' }}
-            onClick={() => setFilter('')}
-          >
-            Tous
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c}
-              className={`chip ${filter === c ? 'active' : ''}`}
-              style={{ border: 'none' }}
-              onClick={() => setFilter(c)}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
+        <FilterRow label="Catégorie" options={categories} value={cat} onChange={setCat} />
+      )}
+      {authors.length > 0 && (
+        <FilterRow label="Auteur" options={authors} value={author} onChange={setAuthor} />
       )}
 
       {shown.length === 0 ? (
         <div className="empty">
           <div className="emoji">📚</div>
-          <p>Ta bibliothèque est vide.</p>
+          <p>{patterns.length === 0 ? 'Ta bibliothèque est vide.' : 'Aucun patron pour ce filtre.'}</p>
         </div>
       ) : (
         shown.map((p) => (
@@ -68,93 +54,44 @@ export function Library() {
         </button>
       </div>
 
-      {adding && (
-        <AddPatternModal
-          onClose={() => setAdding(false)}
-          onSave={async (data) => {
-            await addPattern(data)
-            setAdding(false)
-          }}
-        />
-      )}
+      {adding && <PatternModal onClose={() => setAdding(false)} />}
     </div>
   )
 }
 
-interface NewPattern {
-  name: string
-  author: string
-  category: string
-  file: FileRef | null
-}
-
-function AddPatternModal({
-  onClose,
-  onSave,
+function FilterRow({
+  label,
+  options,
+  value,
+  onChange,
 }: {
-  onClose: () => void
-  onSave: (p: NewPattern) => void
+  label: string
+  options: string[]
+  value: string
+  onChange: (v: string) => void
 }) {
-  const [name, setName] = useState('')
-  const [author, setAuthor] = useState('')
-  const [category, setCategory] = useState('')
-  const [file, setFile] = useState<FileRef | null>(null)
-  const [busy, setBusy] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setBusy(true)
-    try {
-      setFile(await uploadFile('patterns', f))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
-    <Modal title="Nouveau patron" onClose={onClose}>
-      <div className="field">
-        <label>Nom du patron</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Pull Sophie" />
-      </div>
-      <div className="row">
-        <div className="field">
-          <label>Auteur·rice</label>
-          <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="PetiteKnit" />
-        </div>
-        <div className="field">
-          <label>Catégorie</label>
-          <input
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="Pull"
-            list="cat-list"
-          />
-        </div>
-      </div>
-      <div className="field">
-        <label>Fichier (PDF ou image)</label>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="application/pdf,image/*"
-          onChange={onPick}
-          style={{ display: 'none' }}
-        />
-        <button className="btn ghost block" onClick={() => inputRef.current?.click()}>
-          {busy ? 'Chargement…' : file ? `✓ ${file.name}` : '📎 Choisir un fichier'}
+    <div className="filter-row">
+      <span className="filter-label">{label}</span>
+      <div className="photo-strip">
+        <button
+          className={`chip ${!value ? 'active' : ''}`}
+          style={{ border: 'none' }}
+          onClick={() => onChange('')}
+        >
+          Tous
         </button>
+        {options.map((o) => (
+          <button
+            key={o}
+            className={`chip ${value === o ? 'active' : ''}`}
+            style={{ border: 'none' }}
+            onClick={() => onChange(value === o ? '' : o)}
+          >
+            {o}
+          </button>
+        ))}
       </div>
-      <button
-        className="btn block"
-        disabled={!name.trim()}
-        style={{ marginTop: 8, opacity: name.trim() ? 1 : 0.5 }}
-        onClick={() => onSave({ name: name.trim(), author: author.trim(), category: category.trim(), file })}
-      >
-        Enregistrer
-      </button>
-    </Modal>
+    </div>
   )
 }
