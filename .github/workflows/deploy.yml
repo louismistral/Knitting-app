@@ -1,9 +1,10 @@
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    branches:
-      - claude/maille-organic
+  # Manual only: this branch isn't the repo's default yet. Auto-deploying on
+  # every push would silently overwrite whatever GitHub Pages is currently
+  # serving from the default branch (Pages only ever serves one live site
+  # per repo, regardless of which branch triggered the last deploy).
   workflow_dispatch:
 
 permissions:
