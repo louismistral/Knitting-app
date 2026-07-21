@@ -134,7 +134,11 @@ class App extends Component {
     return {categories,authors,needleLengths,displayName:meta.display_name||''};
   }
   async saveMeta(patch){
-    this.setState(patch);
+    // `patch` utilise les clés snake_case de user_metadata (côté Supabase) ;
+    // l'état local est en camelCase, d'où la table de correspondance.
+    const keyMap={display_name:'displayName',needle_lengths:'needleLengths'};
+    const statePatch={}; Object.keys(patch).forEach(k=>{ statePatch[keyMap[k]||k]=patch[k]; });
+    this.setState(statePatch);
     try{ await supabase.auth.updateUser({data:patch}); }catch(e){}
   }
   async refreshSignedUrls(){
