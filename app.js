@@ -27,7 +27,6 @@ class App extends Component {
       editingProject:null, projectDraft:null, projectDraftInitial:null,
       allocPick:{colorwayId:'',grams:''}, needlePick:'',
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
-      libFilter:'Tous', libAuthor:'Tous',
       // ---- needle stash ----
       addNeedleOpen:false, needleDraft:this.blankNeedle(),
       editingNeedle:null, needleEditDraft:null,
@@ -39,6 +38,9 @@ class App extends Component {
       editingName:false, nameDraft:'',
       // ---- garde-fou navigation ----
       pendingNav:null,
+      // ---- primitives Phase 1 : confirmation & filtres ----
+      confirm:null,           // {title,message,confirmLabel,onConfirm}
+      filters:{}, filterOpen:{},
     };
     this._loadingData=false;
   }
@@ -47,6 +49,65 @@ class App extends Component {
   blankNeedle(){ return {brand:'',size:'',length:'',interchangeable:false}; }
   standardLengths(){ return ['15 cm','20 cm','25 cm','30 cm','40 cm','60 cm','80 cm','100 cm','120 cm']; }
   today(){ return new Date().toISOString().slice(0,10); }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Primitives UI réutilisables (Phase 1)
+  // ══════════════════════════════════════════════════════════════════
+
+  // Bouton « + <texte> » en pointillé.
+  addBtn(label,onClick,extraStyle){ return html`<button class="btn-add" style=${extraStyle||''} onClick=${onClick}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${label}</button>`; }
+
+  // Toggle segmenté (N options), le pouce glisse sous l'option active.
+  segToggle(options,value,onChange,width){ const n=options.length; const idx=Math.max(0,options.findIndex(o=>o.value===value));
+    return html`<div class="seg-toggle" style=${width?('width:'+width):''}>
+      <div class="seg-thumb" style=${`width:calc((100% - 6px)/${n});transform:translateX(calc(${idx} * 100%))`}></div>
+      ${options.map(o=>html`<button type="button" class=${o.value===value?'on':''} onClick=${()=>onChange(o.value)}>${o.label}</button>`)}
+    </div>`; }
+
+  // Modale flottante générique.
+  renderModal({title,body,actions,onBackdrop,width,z}){
+    return html`<div class="dialog-backdrop" style=${'z-index:'+(z||60)} onClick=${onBackdrop||null}>
+      <div class="dialog" style=${'width:min('+(width||440)+'px,100%)'} onClick=${(e)=>e.stopPropagation()}>
+        ${title?html`<div class="dialog-title">${title}</div>`:null}
+        ${body}
+        ${actions?html`<div class="dialog-actions" style="flex-wrap:wrap">${actions}</div>`:null}
+      </div>
+    </div>`; }
+
+  // Confirmation générique (utilisée avant toute suppression).
+  askConfirm(opts){ this.setState({confirm:{confirmLabel:'Supprimer',...opts}}); }
+  confirmYes=()=>{ const c=this.state.confirm; this.setState({confirm:null}); if(c&&c.onConfirm) c.onConfirm(); };
+  confirmNo=()=>this.setState({confirm:null});
+
+  // Modèle de filtres multi-tags avec mémoire du « Tout » (par zone puis dimension).
+  getFilt(zone,dim){ const z=this.state.filters[zone]; return (z&&z[dim])||{sel:[],mem:[]}; }
+  setFilt(zone,dim,next){ this.setState(s=>({filters:{...s.filters,[zone]:{...(s.filters[zone]||{}),[dim]:next}}})); }
+  toggleFilterTag=(zone,dim,val)=>()=>{ const f=this.getFilt(zone,dim);
+    const sel=f.sel.includes(val)?f.sel.filter(x=>x!==val):[...f.sel,val];
+    this.setFilt(zone,dim,{sel,mem:[]}); };
+  toggleFilterAll=(zone,dim)=>()=>{ const f=this.getFilt(zone,dim);
+    if(f.sel.length===0){ if(f.mem.length) this.setFilt(zone,dim,{sel:f.mem,mem:[]}); }
+    else this.setFilt(zone,dim,{sel:[],mem:f.sel}); };
+  toggleFilterPanel=(zone)=>()=>this.setState(s=>({filterOpen:{...s.filterOpen,[zone]:!s.filterOpen[zone]}}));
+  filterCount(zone,dims){ return dims.reduce((n,d)=>n+this.getFilt(zone,d).sel.length,0); }
+  filterPass(zone,dim,val){ const f=this.getFilt(zone,dim); return f.sel.length===0 || f.sel.includes(val); }
+  purgeFilterValue(zone,dim,val){ const f=this.getFilt(zone,dim);
+    if(f.sel.includes(val)||f.mem.includes(val)) this.setFilt(zone,dim,{sel:f.sel.filter(x=>x!==val),mem:f.mem.filter(x=>x!==val)}); }
+  // Bouton « Filtrer » (avec compteur) + panneau de tags.
+  renderFilterButton(zone,dims){ const c=this.filterCount(zone,dims);
+    return html`<button class="btn btn-secondary" onClick=${this.toggleFilterPanel(zone)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg>Filtrer${c>0?html`<span class="filter-badge">${c}</span>`:''}</button>`; }
+  renderFilterPanel(zone,dimsConfig){ if(!this.state.filterOpen[zone]) return null;
+    return html`<div class="filter-panel">
+      ${dimsConfig.map((dc,di)=>{ const f=this.getFilt(zone,dc.dim); const allOn=f.sel.length===0;
+        return html`<div style=${di>0?'margin-top:14px':''}>
+          <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">${dc.label}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class=${'filter-chip'+(allOn?' on':'')} onClick=${this.toggleFilterAll(zone,dc.dim)}>Tout</button>
+            ${dc.options.map(o=>{ const on=f.sel.includes(o); const mem=allOn&&f.mem.includes(o);
+              return html`<button class=${'filter-chip'+(on?' on':'')+(mem?' mem':'')} onClick=${this.toggleFilterTag(zone,dc.dim,o)}>${o}</button>`; })}
+          </div>
+        </div>`; })}
+    </div>`; }
 
   // ---- auth lifecycle ----
   componentDidMount(){
@@ -203,7 +264,10 @@ class App extends Component {
   };
   toggleAddYarn=()=>this.setState(s=>({addYarnOpen:!s.addYarnOpen}));
   toggleYarn=(id)=>()=>this.setState(s=>({expandedYarn:s.expandedYarn===id?null:id}));
-  deleteYarn=(id)=>async(e)=>{ e.stopPropagation(); await supabase.from('yarns').delete().eq('id',id);
+  deleteYarn=(id)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id);
+    this.askConfirm({title:'Supprimer la laine ?',message:`« ${y?y.name:'Cette laine'} » et tous ses coloris seront définitivement supprimés.`,
+      onConfirm:()=>this._deleteYarn(id)}); };
+  _deleteYarn=async(id)=>{ await supabase.from('yarns').delete().eq('id',id);
     this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
   startEditYarn=(id)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id);
     this.setState({editingYarn:id,yarnEditDraft:{brand:y.brand,name:y.name,mps:String(y.mps||''),gps:String(y.gps||''),blend:y.blend||''}}); };
@@ -269,13 +333,13 @@ class App extends Component {
       this.setState(s=>({patterns:[pat,...s.patterns],patternDialog:false,patternEditId:null,patternOrigPath:''}));
     }
   };
-  deletePattern=(id)=>async(e)=>{ e.stopPropagation(); const p=this.state.patterns.find(x=>x.id===id);
+  deletePattern=(id)=>(e)=>{ e.stopPropagation(); const p=this.state.patterns.find(x=>x.id===id);
+    this.askConfirm({title:'Supprimer le patron ?',message:`« ${p?p.name:'Ce patron'} » sera définitivement supprimé.`,
+      onConfirm:()=>this._deletePattern(id)}); };
+  _deletePattern=async(id)=>{ const p=this.state.patterns.find(x=>x.id===id);
     if(p&&p.path) await supabase.storage.from('patterns').remove([p.path]);
     await supabase.from('patterns').delete().eq('id',id);
     this.setState(s=>({patterns:s.patterns.filter(x=>x.id!==id)})); };
-  setLibFilter=(c)=>()=>this.setState({libFilter:c});
-  setLibAuthor=(a)=>()=>this.setState({libAuthor:a});
-
   // ---- taxonomies (catégories & auteurs, stockées dans user_metadata) ----
   toggleManageTax=()=>this.setState(s=>({manageTax:!s.manageTax}));
   setNewCategory=(e)=>this.setState({newCategory:e.target.value});
@@ -283,11 +347,11 @@ class App extends Component {
   addCategory=async()=>{ const c=this.state.newCategory.trim(); if(!c||this.state.categories.includes(c)){ this.setState({newCategory:''}); return; }
     this.setState({newCategory:''}); await this.saveMeta({categories:[...this.state.categories,c]}); };
   deleteCategory=(c)=>async()=>{ await this.saveMeta({categories:this.state.categories.filter(x=>x!==c)});
-    this.setState(s=>({libFilter:s.libFilter===c?'Tous':s.libFilter})); };
+    this.purgeFilterValue('library','category',c); };
   addAuthor=async()=>{ const a=this.state.newAuthor.trim(); if(!a||this.state.authors.includes(a)){ this.setState({newAuthor:''}); return; }
     this.setState({newAuthor:''}); await this.saveMeta({authors:[...this.state.authors,a]}); };
   deleteAuthor=(a)=>async()=>{ await this.saveMeta({authors:this.state.authors.filter(x=>x!==a)});
-    this.setState(s=>({libAuthor:s.libAuthor===a?'Tous':s.libAuthor})); };
+    this.purgeFilterValue('library','author',a); };
 
   // ---- profil : nom personnalisé ----
   startEditName=()=>this.setState(s=>({editingName:true,nameDraft:s.displayName||''}));
@@ -298,6 +362,7 @@ class App extends Component {
   // ---- needle stash ----
   toggleAddNeedle=()=>this.setState(s=>({addNeedleOpen:!s.addNeedleOpen,needleDraft:this.blankNeedle()}));
   setNeedleDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleDraft:{...s.needleDraft,[f]:v}})); };
+  setNeedleDraftVal=(f)=>(val)=>this.setState(s=>({needleDraft:{...s.needleDraft,[f]:val}}));
   addNeedle=async()=>{ const d=this.state.needleDraft; if(d.size===''&&!d.brand.trim()) return;
     const uid=this.state.session.user.id; const len=(d.length||'').trim();
     if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
@@ -309,12 +374,16 @@ class App extends Component {
     this.setState({editingNeedle:id,needleEditDraft:{brand:n.brand,size:n.size,length:n.length,interchangeable:n.interchangeable}}); };
   cancelEditNeedle=()=>this.setState({editingNeedle:null,needleEditDraft:null});
   setNeedleEditDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleEditDraft:{...s.needleEditDraft,[f]:v}})); };
+  setNeedleEditDraftVal=(f)=>(val)=>this.setState(s=>({needleEditDraft:{...s.needleEditDraft,[f]:val}}));
   saveEditNeedle=(id)=>async()=>{ const d=this.state.needleEditDraft; if(!d) return; const len=(d.length||'').trim();
     if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
     const cols={brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:len,interchangeable:!!d.interchangeable};
     await supabase.from('needles').update(cols).eq('id',id);
     this.setState(s=>({needles:s.needles.map(n=>n.id!==id?n:{id,brand:cols.brand,size:cols.size_mm===0&&d.size===''?'':String(cols.size_mm),length:cols.length,interchangeable:cols.interchangeable}),editingNeedle:null,needleEditDraft:null})); };
-  deleteNeedle=(id)=>async(e)=>{ e.stopPropagation(); await supabase.from('needles').delete().eq('id',id);
+  deleteNeedle=(id)=>(e)=>{ e.stopPropagation(); const n=this.state.needles.find(x=>x.id===id);
+    this.askConfirm({title:'Supprimer l\'aiguille ?',message:`« ${n?this.needleLabel(n):'Cette aiguille'} » sera définitivement supprimée.`,
+      onConfirm:()=>this._deleteNeedle(id)}); };
+  _deleteNeedle=async(id)=>{ await supabase.from('needles').delete().eq('id',id);
     this.setState(s=>({needles:s.needles.filter(n=>n.id!==id),
       projects:s.projects.map(p=>({...p,needleLinks:(p.needleLinks||[]).filter(l=>l.needleId!==id)})),
       projectDraft:s.projectDraft?{...s.projectDraft,needleLinks:(s.projectDraft.needleLinks||[]).filter(l=>l.needleId!==id)}:s.projectDraft})); };
@@ -393,7 +462,10 @@ class App extends Component {
   };
   finishProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:this.today()}}));
   reopenProject=()=>this.setState(s=>({projectDraft:{...s.projectDraft,endDate:null}}));
-  deleteProject=async()=>{ const id=this.state.projectDraft.id;
+  deleteProject=()=>{ const d=this.state.projectDraft;
+    this.askConfirm({title:'Supprimer le projet ?',message:`« ${d&&d.name?d.name:'Ce projet'} » sera définitivement supprimé, ainsi que ses photos.`,
+      onConfirm:()=>this._deleteProject()}); };
+  _deleteProject=async()=>{ const id=this.state.projectDraft.id;
     if(id){
       const proj=this.state.projects.find(p=>p.id===id) || this.state.projectDraft;
       const paths=(proj.photos||[]).map(ph=>ph.path).filter(Boolean);
@@ -491,18 +563,15 @@ class App extends Component {
 
     const usedCats=st.patterns.map(p=>p.category).filter(Boolean);
     const allCats=Array.from(new Set([...st.categories,...usedCats]));
-    const chipStyle=(active)=>`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${active?'var(--color-accent)':'var(--color-divider)'};background:${active?'var(--color-accent)':'transparent'};color:${active?'var(--color-bg)':'var(--color-text)'}`;
-    const catChips=['Tous',...allCats].map(c=>({label:c,active:st.libFilter===c,pick:this.setLibFilter(c),style:chipStyle(st.libFilter===c)}));
     const usedAuthors=st.patterns.map(p=>p.author).filter(Boolean);
     const allAuthors=Array.from(new Set([...st.authors,...usedAuthors]));
-    const authorChips=['Tous',...allAuthors].map(a=>({label:a,active:st.libAuthor===a,pick:this.setLibAuthor(a),
-      style:`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${st.libAuthor===a?'var(--color-accent-2)':'var(--color-divider)'};background:${st.libAuthor===a?'var(--color-accent-2)':'transparent'};color:${st.libAuthor===a?'var(--color-bg)':'var(--color-text)'}`}));
-    const hasAuthorChips=allAuthors.length>0;
     // Panneau « gérer les catégories / auteurs »
     const manageCats=allCats.map(c=>({label:c,del:this.deleteCategory(c)}));
     const manageAuthors=allAuthors.map(a=>({label:a,del:this.deleteAuthor(a)}));
+    const libraryFilterBtn=this.renderFilterButton('library',['category','author']);
+    const libraryFilterPanel=this.renderFilterPanel('library',[{dim:'category',label:'Catégorie',options:allCats},{dim:'author',label:'Auteur',options:allAuthors}]);
     const usedIn=(id)=>st.projects.filter(p=>p.patternId===id).length;
-    const patterns=st.patterns.filter(p=>(st.libFilter==='Tous'||p.category===st.libFilter)&&(st.libAuthor==='Tous'||p.author===st.libAuthor)).map(p=>{
+    const patterns=st.patterns.filter(p=>this.filterPass('library','category',p.category)&&this.filterPass('library','author',p.author)).map(p=>{
       const url=p.kind==='img'&&p.path? st.signedUrls[p.path]:'';
       return {id:p.id,name:p.name,category:p.category,author:p.author||'Sans auteur',isPdf:p.kind==='pdf',
         coverStyle:`height:150px;display:flex;align-items:center;justify-content:center;${url?`background-image:url(${url});background-size:cover;background-position:center`:`background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))`}`,
@@ -582,7 +651,7 @@ class App extends Component {
       stashEmpty:st.stash.length===0,
       yed:st.yarnEditDraft,cancelEditYarn:this.cancelEditYarn,
       setYEBrand:this.setYarnEditDraft('brand'),setYEName:this.setYarnEditDraft('name'),setYEMps:this.setYarnEditDraft('mps'),setYEGps:this.setYarnEditDraft('gps'),setYEBlend:this.setYarnEditDraft('blend'),
-      catChips,authorChips,hasAuthorChips,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
+      libraryFilterBtn,libraryFilterPanel,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
       manageTax:st.manageTax,toggleManageTax:this.toggleManageTax,manageCats,manageAuthors,
       newCategory:st.newCategory,setNewCategory:this.setNewCategory,addCategory:this.addCategory,
       newAuthor:st.newAuthor,setNewAuthor:this.setNewAuthor,addAuthor:this.addAuthor,
@@ -599,12 +668,13 @@ class App extends Component {
       setNeedlePick:this.setNeedlePick,addProjectNeedle:this.addProjectNeedle,
       onProjectPhoto:this.onProjectPhoto,
       pendingNav:st.pendingNav,confirmNavSave:this.confirmNavSave,confirmNavDiscard:this.confirmNavDiscard,cancelNav:this.cancelNav,
+      confirm:st.confirm,confirmYes:this.confirmYes,confirmNo:this.confirmNo,
       // needle stash
       needleRows,needlesEmpty:st.needles.length===0,needlesFilteredEmpty:needleRows.length===0,
       addNeedleOpen:st.addNeedleOpen,toggleAddNeedle:this.toggleAddNeedle,addNeedle:this.addNeedle,nd:st.needleDraft,
-      setNBrand:this.setNeedleDraft('brand'),setNSize:this.setNeedleDraft('size'),setNLength:this.setNeedleDraft('length'),setNInter:this.setNeedleDraft('interchangeable'),
+      setNBrand:this.setNeedleDraft('brand'),setNSize:this.setNeedleDraft('size'),setNLength:this.setNeedleDraft('length'),setNInterVal:this.setNeedleDraftVal('interchangeable'),
       ned:st.needleEditDraft,cancelEditNeedle:this.cancelEditNeedle,
-      setNEBrand:this.setNeedleEditDraft('brand'),setNESize:this.setNeedleEditDraft('size'),setNELength:this.setNeedleEditDraft('length'),setNEInter:this.setNeedleEditDraft('interchangeable'),
+      setNEBrand:this.setNeedleEditDraft('brand'),setNESize:this.setNeedleEditDraft('size'),setNELength:this.setNeedleEditDraft('length'),setNEInterVal:this.setNeedleEditDraftVal('interchangeable'),
       needleLenChips,needleIntChips,lengthOptions:allLengths,
       manageLen:st.manageLen,toggleManageLen:this.toggleManageLen,manageLengths,newLength:st.newLength,setNewLength:this.setNewLength,addLength:this.addLength,
       profPatterns:st.patterns.length,profYarns:st.stash.length,
@@ -818,7 +888,7 @@ class App extends Component {
                           <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwDraft.grams} onInput=${v.setCwGramsD} placeholder="100"/></div>
                           <button class="btn btn-primary" onClick=${y.addCw}>Ajouter</button>
                         </div>`}
-                      <button class="btn btn-ghost" onClick=${y.startCw} style="align-self:flex-start"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un coloris / dye lot</button>
+                      ${this.addBtn('Ajouter un coloris / dye lot',y.startCw,'align-self:flex-start')}
                     </div>
                   </div>`}
               </div>`)}
@@ -860,7 +930,7 @@ class App extends Component {
                     ${v.lengthOptions.map(l=>html`<option value=${l}>${l}</option>`)}
                   </select>
                 </div>
-                <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;padding-bottom:8px;cursor:pointer"><input type="checkbox" checked=${v.nd.interchangeable} onChange=${v.setNInter} style="width:18px;height:18px;accent-color:var(--color-accent);cursor:pointer"/>Interchangeable</label>
+                <div class="field"><label>Type</label>${this.segToggle([{label:'Interchangeable',value:true},{label:'Fixe',value:false}],v.nd.interchangeable,v.setNInterVal,'100%')}</div>
                 <div style="display:flex;gap:8px;grid-column:1/-1;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.toggleAddNeedle}>Annuler</button><button class="btn btn-primary" onClick=${v.addNeedle}>Ajouter au stash</button></div>
               </div>
             </div>`}
@@ -900,7 +970,7 @@ class App extends Component {
                           </select>
                         </div>
                       </div>
-                      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer"><input type="checkbox" checked=${v.ned.interchangeable} onChange=${v.setNEInter} style="width:18px;height:18px;accent-color:var(--color-accent);cursor:pointer"/>Interchangeable</label>
+                      <div class="field" style="margin:0"><label>Type</label>${this.segToggle([{label:'Interchangeable',value:true},{label:'Fixe',value:false}],v.ned.interchangeable,v.setNEInterVal,'100%')}</div>
                       <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.cancelEditNeedle}>Annuler</button><button class="btn btn-primary" onClick=${n.saveEdit}>Enregistrer</button></div>
                     </div>
                   </div>`}
@@ -918,9 +988,12 @@ class App extends Component {
             </div>
             <div style="display:flex;gap:8px">
               <button class="btn btn-secondary" onClick=${v.toggleManageTax} title="Gérer les catégories et auteurs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Gérer</button>
+              ${v.libraryFilterBtn}
               <button class="btn btn-primary" onClick=${v.openPattern}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un patron</button>
             </div>
           </div>
+
+          ${v.libraryFilterPanel}
 
           ${v.manageTax && html`
             <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:20px;animation:pop .2s ease both">
@@ -942,16 +1015,6 @@ class App extends Component {
                   <div style="display:flex;gap:8px"><input class="input" value=${v.newAuthor} onInput=${v.setNewAuthor} placeholder="Nouvel auteur" onKeyDown=${(e)=>{if(e.key==='Enter')v.addAuthor();}}/><button class="btn btn-primary" onClick=${v.addAuthor}>Ajouter</button></div>
                 </div>
               </div>
-            </div>`}
-
-          <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Catégorie</div>
-          <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:16px">
-            ${v.catChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}
-          </div>
-          ${v.hasAuthorChips && html`
-            <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent-2-700);margin-bottom:8px">Auteur</div>
-            <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px">
-              ${v.authorChips.map(a=>html`<button onClick=${a.pick} style=${a.style}>${a.label}</button>`)}
             </div>`}
 
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px">
@@ -1199,18 +1262,18 @@ class App extends Component {
         </div>
       </div>`}
 
-    ${v.pendingNav && html`
-      <div class="dialog-backdrop" style="z-index:60">
-        <div class="dialog" style="width:min(420px,100%)">
-          <div class="dialog-title">Modifications non enregistrées</div>
-          <div class="dialog-body">Tu as des changements non enregistrés sur ce projet. Veux-tu les enregistrer avant de quitter ?</div>
-          <div class="dialog-actions" style="flex-wrap:wrap">
-            <button class="btn btn-ghost" onClick=${v.cancelNav}>Annuler</button>
-            <button class="btn btn-secondary" onClick=${v.confirmNavDiscard}>Ne pas enregistrer</button>
-            <button class="btn btn-primary" onClick=${v.confirmNavSave}>Enregistrer</button>
-          </div>
-        </div>
-      </div>`}
+    ${v.pendingNav && this.renderModal({title:'Modifications non enregistrées',width:420,onBackdrop:v.cancelNav,
+      body:html`<div class="dialog-body">Tu as des changements non enregistrés sur ce projet. Veux-tu les enregistrer avant de quitter ?</div>`,
+      actions:html`
+        <button class="btn btn-ghost" onClick=${v.cancelNav}>Annuler</button>
+        <button class="btn btn-secondary" onClick=${v.confirmNavDiscard}>Ne pas enregistrer</button>
+        <button class="btn btn-primary" onClick=${v.confirmNavSave}>Enregistrer</button>`})}
+
+    ${v.confirm && this.renderModal({title:v.confirm.title||'Confirmer',width:420,z:70,onBackdrop:v.confirmNo,
+      body:html`<div class="dialog-body">${v.confirm.message||''}</div>`,
+      actions:html`
+        <button class="btn btn-secondary" onClick=${v.confirmNo}>Annuler</button>
+        <button class="btn btn-primary" style="background:var(--color-accent-700)" onClick=${v.confirmYes}>${v.confirm.confirmLabel||'Supprimer'}</button>`})}
     `;
   }
 }

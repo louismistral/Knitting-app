@@ -193,6 +193,44 @@ input[type=date].input { -webkit-appearance: none; appearance: none; }
 input[type=file]{display:none}
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Primitives UI réutilisables (Phase 1) — bouton d'ajout pointillé, toggle
+   segmenté, panneau de filtres. Utilisés dans toutes les sections.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Bouton « + Ajouter » en pointillé. */
+.btn-add{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;
+  font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:14px;
+  color:var(--color-accent);background:transparent;
+  border:1.5px dashed color-mix(in srgb,var(--color-accent) 65%,transparent);
+  border-radius:999px;padding:var(--space-2) calc(var(--space-3)*1.2);line-height:1.2;
+  transition:background .15s,border-color .15s;
+}
+.btn-add:hover{background:color-mix(in srgb,var(--color-accent) 9%,transparent);border-color:var(--color-accent);}
+.btn-add svg{display:block}
+
+/* Toggle segmenté : le pouce coloré glisse sous l'option active. */
+.seg-toggle{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;
+  background:var(--color-bg);border:1px solid var(--color-divider);border-radius:999px;padding:3px;}
+.seg-toggle button{position:relative;z-index:1;border:none;background:transparent;cursor:pointer;
+  font-family:var(--font-body);font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;
+  color:var(--color-text);transition:color .2s;white-space:nowrap;}
+.seg-toggle button.on{color:var(--color-bg);}
+.seg-toggle .seg-thumb{position:absolute;top:3px;bottom:3px;left:3px;border-radius:999px;
+  background:var(--color-accent);z-index:0;transition:transform .2s ease;}
+
+/* Panneau de filtres (multi-tags, mémoire du « Tout »). */
+.filter-panel{border-radius:22px;background:var(--color-surface);box-shadow:var(--shadow-sm);
+  padding:16px 18px;margin-bottom:18px;animation:pop .2s ease both;}
+.filter-chip{cursor:pointer;padding:6px 14px;border-radius:999px;font-size:13px;
+  border:1px solid var(--color-divider);background:transparent;color:var(--color-text);transition:all .12s;}
+.filter-chip:hover{border-color:color-mix(in srgb,var(--color-text) 40%,transparent);}
+.filter-chip.on{border-color:var(--color-accent);background:var(--color-accent);color:var(--color-bg);}
+.filter-chip.mem{border-color:var(--color-accent);color:var(--color-accent);opacity:.5;border-style:dashed;background:transparent;}
+.filter-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+  padding:0 5px;border-radius:999px;background:var(--color-accent);color:var(--color-bg);font-size:11px;font-weight:700;margin-left:2px;}
+
+/* ══════════════════════════════════════════════════════════════════════════
    Comportement « webapp » : l'app remplit l'écran, pas de zoom ni de rebond.
    (Le zoom est bloqué via le <meta viewport> ; touch-action neutralise le
    double-tap-zoom, overscroll-behavior le pull-to-refresh / rubber-band.)
