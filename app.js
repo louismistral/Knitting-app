@@ -28,12 +28,10 @@ class App extends Component {
       allocPick:{colorwayId:'',grams:''}, needlePick:'',
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
       // ---- needle stash ----
-      addNeedleOpen:false, needleDraft:this.blankNeedle(),
-      editingNeedle:null, needleEditDraft:null,
-      needleLenFilter:'Toutes', needleIntFilter:'Toutes',
-      manageLen:false, newLength:'',
+      needleDialog:false, needleDraft:this.blankNeedle(), needleEditId:null,
+      manageSizes:false, newSize:'',
       // ---- taxonomies + profil (stockés dans user_metadata) ----
-      categories:[], authors:[], needleLengths:[], displayName:'',
+      categories:[], authors:[], needleSizes:[], displayName:'',
       manageTax:false, newCategory:'', newAuthor:'',
       editingName:false, nameDraft:'',
       // ---- garde-fou navigation ----
@@ -47,7 +45,7 @@ class App extends Component {
   blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:''}; }
   blankPattern(){ return {name:'',category:'Pull',author:'',path:'',fileName:'',kind:''}; }
   blankNeedle(){ return {brand:'',size:'',length:'',interchangeable:false}; }
-  standardLengths(){ return ['15 cm','20 cm','25 cm','30 cm','40 cm','60 cm','80 cm','100 cm','120 cm']; }
+  standardSizes(){ return [2,2.25,2.5,2.75,3,3.25,3.5,3.75,4,4.5,5,5.5,6,6.5,7,8,9,10,12,15,20].map(String); }
   today(){ return new Date().toISOString().slice(0,10); }
 
   // ══════════════════════════════════════════════════════════════════
@@ -118,7 +116,7 @@ class App extends Component {
     supabase.auth.onAuthStateChange((event,session)=>{
       if(event==='SIGNED_OUT'){
         this.setState({session:null,sessionChecked:true,loaded:false,stash:[],patterns:[],projects:[],needles:[],signedUrls:{},
-          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false,addNeedleOpen:false,editingNeedle:null});
+          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false,needleDialog:false,needleEditId:null});
       } else if(session){
         this.setState({session,sessionChecked:true});
         if(!this.state.loaded) this.loadAll();
@@ -191,13 +189,13 @@ class App extends Component {
     const defaults=['Pull','Gilet','Bonnet','Chaussettes','Écharpe','Châle','Accessoire','Autre'];
     const categories=Array.isArray(meta.categories)&&meta.categories.length?meta.categories.slice():Array.from(new Set([...defaults,...usedCats]));
     const authors=Array.isArray(meta.authors)?meta.authors.slice():usedAuthors;
-    const needleLengths=Array.isArray(meta.needle_lengths)&&meta.needle_lengths.length?meta.needle_lengths.slice():this.standardLengths();
-    return {categories,authors,needleLengths,displayName:meta.display_name||''};
+    const needleSizes=Array.isArray(meta.needle_sizes)&&meta.needle_sizes.length?meta.needle_sizes.slice():this.standardSizes();
+    return {categories,authors,needleSizes,displayName:meta.display_name||''};
   }
   async saveMeta(patch){
     // `patch` utilise les clés snake_case de user_metadata (côté Supabase) ;
     // l'état local est en camelCase, d'où la table de correspondance.
-    const keyMap={display_name:'displayName',needle_lengths:'needleLengths'};
+    const keyMap={display_name:'displayName',needle_sizes:'needleSizes'};
     const statePatch={}; Object.keys(patch).forEach(k=>{ statePatch[keyMap[k]||k]=patch[k]; });
     this.setState(statePatch);
     try{ await supabase.auth.updateUser({data:patch}); }catch(e){}
@@ -360,26 +358,26 @@ class App extends Component {
   saveName=async()=>{ const n=this.state.nameDraft.trim(); await this.saveMeta({display_name:n}); this.setState({editingName:false}); };
 
   // ---- needle stash ----
-  toggleAddNeedle=()=>this.setState(s=>({addNeedleOpen:!s.addNeedleOpen,needleDraft:this.blankNeedle()}));
+  openNeedleAdd=()=>this.setState({needleDialog:true,needleDraft:this.blankNeedle(),needleEditId:null});
+  openNeedleEdit=(id)=>()=>{ const n=this.state.needles.find(x=>x.id===id); if(!n) return;
+    this.setState({needleDialog:true,needleEditId:id,needleDraft:{brand:n.brand,size:n.size,length:n.length,interchangeable:n.interchangeable}}); };
+  closeNeedleDialog=()=>this.setState({needleDialog:false,needleEditId:null});
   setNeedleDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleDraft:{...s.needleDraft,[f]:v}})); };
   setNeedleDraftVal=(f)=>(val)=>this.setState(s=>({needleDraft:{...s.needleDraft,[f]:val}}));
-  addNeedle=async()=>{ const d=this.state.needleDraft; if(d.size===''&&!d.brand.trim()) return;
-    const uid=this.state.session.user.id; const len=(d.length||'').trim();
-    if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
-    const {data:row}=await supabase.from('needles').insert({user_id:uid,brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:len,interchangeable:!!d.interchangeable}).select().single();
-    if(!row) return;
-    const needle={id:row.id,brand:row.brand||'',size:row.size_mm===null?'':String(row.size_mm),length:row.length||'',interchangeable:!!row.interchangeable};
-    this.setState(s=>({needles:[needle,...s.needles],needleDraft:this.blankNeedle(),addNeedleOpen:false})); };
-  startEditNeedle=(id)=>()=>{ const n=this.state.needles.find(x=>x.id===id);
-    this.setState({editingNeedle:id,needleEditDraft:{brand:n.brand,size:n.size,length:n.length,interchangeable:n.interchangeable}}); };
-  cancelEditNeedle=()=>this.setState({editingNeedle:null,needleEditDraft:null});
-  setNeedleEditDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleEditDraft:{...s.needleEditDraft,[f]:v}})); };
-  setNeedleEditDraftVal=(f)=>(val)=>this.setState(s=>({needleEditDraft:{...s.needleEditDraft,[f]:val}}));
-  saveEditNeedle=(id)=>async()=>{ const d=this.state.needleEditDraft; if(!d) return; const len=(d.length||'').trim();
-    if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
-    const cols={brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:len,interchangeable:!!d.interchangeable};
-    await supabase.from('needles').update(cols).eq('id',id);
-    this.setState(s=>({needles:s.needles.map(n=>n.id!==id?n:{id,brand:cols.brand,size:cols.size_mm===0&&d.size===''?'':String(cols.size_mm),length:cols.length,interchangeable:cols.interchangeable}),editingNeedle:null,needleEditDraft:null})); };
+  saveNeedle=async()=>{ const d=this.state.needleDraft; if(d.size===''&&!d.brand.trim()) return;
+    if(d.size && !this.state.needleSizes.includes(d.size)) this.saveMeta({needle_sizes:[...this.state.needleSizes,d.size]});
+    const cols={brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:(d.length||'').trim(),interchangeable:!!d.interchangeable};
+    const editId=this.state.needleEditId;
+    if(editId){
+      await supabase.from('needles').update(cols).eq('id',editId);
+      this.setState(s=>({needles:s.needles.map(n=>n.id!==editId?n:{id:editId,brand:cols.brand,size:cols.size_mm===0&&d.size===''?'':String(cols.size_mm),length:cols.length,interchangeable:cols.interchangeable}),needleDialog:false,needleEditId:null}));
+    } else {
+      const uid=this.state.session.user.id;
+      const {data:row}=await supabase.from('needles').insert({user_id:uid,...cols}).select().single();
+      if(!row) return;
+      const needle={id:row.id,brand:row.brand||'',size:row.size_mm===null?'':String(row.size_mm),length:row.length||'',interchangeable:!!row.interchangeable};
+      this.setState(s=>({needles:[needle,...s.needles],needleDraft:this.blankNeedle(),needleDialog:false}));
+    } };
   deleteNeedle=(id)=>(e)=>{ e.stopPropagation(); const n=this.state.needles.find(x=>x.id===id);
     this.askConfirm({title:'Supprimer l\'aiguille ?',message:`« ${n?this.needleLabel(n):'Cette aiguille'} » sera définitivement supprimée.`,
       onConfirm:()=>this._deleteNeedle(id)}); };
@@ -387,15 +385,13 @@ class App extends Component {
     this.setState(s=>({needles:s.needles.filter(n=>n.id!==id),
       projects:s.projects.map(p=>({...p,needleLinks:(p.needleLinks||[]).filter(l=>l.needleId!==id)})),
       projectDraft:s.projectDraft?{...s.projectDraft,needleLinks:(s.projectDraft.needleLinks||[]).filter(l=>l.needleId!==id)}:s.projectDraft})); };
-  setNeedleLenFilter=(l)=>()=>this.setState({needleLenFilter:l});
-  setNeedleIntFilter=(v)=>()=>this.setState({needleIntFilter:v});
-  // gestion des tags de longueur
-  toggleManageLen=()=>this.setState(s=>({manageLen:!s.manageLen}));
-  setNewLength=(e)=>this.setState({newLength:e.target.value});
-  addLength=async()=>{ const l=this.state.newLength.trim(); if(!l||this.state.needleLengths.includes(l)){ this.setState({newLength:''}); return; }
-    this.setState({newLength:''}); await this.saveMeta({needle_lengths:[...this.state.needleLengths,l]}); };
-  deleteLength=(l)=>async()=>{ await this.saveMeta({needle_lengths:this.state.needleLengths.filter(x=>x!==l)});
-    this.setState(s=>({needleLenFilter:s.needleLenFilter===l?'Toutes':s.needleLenFilter})); };
+  // gestion des tags de taille (mm)
+  toggleManageSizes=()=>this.setState(s=>({manageSizes:!s.manageSizes}));
+  setNewSize=(e)=>this.setState({newSize:e.target.value});
+  addSize=async()=>{ const l=this.state.newSize.trim(); if(!l||this.state.needleSizes.includes(l)){ this.setState({newSize:''}); return; }
+    this.setState({newSize:''}); await this.saveMeta({needle_sizes:[...this.state.needleSizes,l]}); };
+  deleteSize=(l)=>async()=>{ await this.saveMeta({needle_sizes:this.state.needleSizes.filter(x=>x!==l)});
+    this.purgeFilterValue('needles','size',l); };
   needleLabel(n){ const parts=[]; if(n.size!=='') parts.push(n.size+' mm'); if(n.length) parts.push(n.length); const head=n.brand||'Aiguille'; return head+(parts.length?' · '+parts.join(' · '):''); }
 
   // ---- association aiguille <-> projet ----
@@ -580,19 +576,17 @@ class App extends Component {
 
     // ---- needle stash ----
     const needleUsedIn=(id)=>st.projects.filter(p=>(p.needleLinks||[]).some(l=>l.needleId===id)).length;
+    const usedSizes=st.needles.map(n=>n.size).filter(Boolean);
+    const allSizes=Array.from(new Set([...st.needleSizes,...usedSizes])).sort((a,b)=>parseFloat(a)-parseFloat(b));
     const filteredNeedles=st.needles.filter(n=>
-      (st.needleLenFilter==='Toutes'||n.length===st.needleLenFilter) &&
-      (st.needleIntFilter==='Toutes'|| (st.needleIntFilter==='Interchangeables'?n.interchangeable:!n.interchangeable)));
+      this.filterPass('needles','size',n.size) &&
+      this.filterPass('needles','type',n.interchangeable?'Interchangeable':'Fixe'));
     const needleRows=filteredNeedles.map(n=>({id:n.id,brand:n.brand||'Sans marque',size:n.size!==''?n.size+' mm':'—',length:n.length||'—',
       interchangeable:n.interchangeable,usedLabel:needleUsedIn(n.id)>0?`${needleUsedIn(n.id)} projet(s)`:'Non utilisée',
-      editing:st.editingNeedle===n.id,startEdit:this.startEditNeedle(n.id),saveEdit:this.saveEditNeedle(n.id),del:this.deleteNeedle(n.id)}));
-    const usedLengths=st.needles.map(n=>n.length).filter(Boolean);
-    const allLengths=Array.from(new Set([...st.needleLengths,...usedLengths]));
-    const lenChipStyle=(active)=>`cursor:pointer;padding:6px 13px;border-radius:999px;font-size:12.5px;border:1px solid ${active?'var(--color-accent)':'var(--color-divider)'};background:${active?'var(--color-accent)':'transparent'};color:${active?'var(--color-bg)':'var(--color-text)'}`;
-    const needleLenChips=['Toutes',...allLengths].map(l=>({label:l,pick:this.setNeedleLenFilter(l),style:lenChipStyle(st.needleLenFilter===l)}));
-    const needleIntChips=['Toutes','Interchangeables','Fixes'].map(v=>({label:v,pick:this.setNeedleIntFilter(v),
-      style:`cursor:pointer;padding:6px 13px;border-radius:999px;font-size:12.5px;border:1px solid ${st.needleIntFilter===v?'var(--color-accent-2)':'var(--color-divider)'};background:${st.needleIntFilter===v?'var(--color-accent-2)':'transparent'};color:${st.needleIntFilter===v?'var(--color-bg)':'var(--color-text)'}`}));
-    const manageLengths=allLengths.map(l=>({label:l,del:this.deleteLength(l)}));
+      startEdit:this.openNeedleEdit(n.id),del:this.deleteNeedle(n.id)}));
+    const manageSizesList=allSizes.map(l=>({label:l,del:this.deleteSize(l)}));
+    const needlesFilterBtn=this.renderFilterButton('needles',['size','type']);
+    const needlesFilterPanel=this.renderFilterPanel('needles',[{dim:'size',label:'Taille (mm)',options:allSizes},{dim:'type',label:'Type',options:['Interchangeable','Fixe']}]);
 
     let detail=null;
     if(st.projectDraft){ const d=st.projectDraft;
@@ -671,12 +665,10 @@ class App extends Component {
       confirm:st.confirm,confirmYes:this.confirmYes,confirmNo:this.confirmNo,
       // needle stash
       needleRows,needlesEmpty:st.needles.length===0,needlesFilteredEmpty:needleRows.length===0,
-      addNeedleOpen:st.addNeedleOpen,toggleAddNeedle:this.toggleAddNeedle,addNeedle:this.addNeedle,nd:st.needleDraft,
+      needleDialog:st.needleDialog,needleEdit:!!st.needleEditId,openNeedleAdd:this.openNeedleAdd,closeNeedleDialog:this.closeNeedleDialog,saveNeedle:this.saveNeedle,nd:st.needleDraft,
       setNBrand:this.setNeedleDraft('brand'),setNSize:this.setNeedleDraft('size'),setNLength:this.setNeedleDraft('length'),setNInterVal:this.setNeedleDraftVal('interchangeable'),
-      ned:st.needleEditDraft,cancelEditNeedle:this.cancelEditNeedle,
-      setNEBrand:this.setNeedleEditDraft('brand'),setNESize:this.setNeedleEditDraft('size'),setNELength:this.setNeedleEditDraft('length'),setNEInterVal:this.setNeedleEditDraftVal('interchangeable'),
-      needleLenChips,needleIntChips,lengthOptions:allLengths,
-      manageLen:st.manageLen,toggleManageLen:this.toggleManageLen,manageLengths,newLength:st.newLength,setNewLength:this.setNewLength,addLength:this.addLength,
+      needlesFilterBtn,needlesFilterPanel,sizeOptions:allSizes,
+      manageSizes:st.manageSizes,toggleManageSizes:this.toggleManageSizes,manageSizesList,newSize:st.newSize,setNewSize:this.setNewSize,addSize:this.addSize,
       profPatterns:st.patterns.length,profYarns:st.stash.length,
       profColorways:st.stash.reduce((s,y)=>s+y.colorways.length,0),
       profOwned:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0)),
@@ -900,43 +892,26 @@ class App extends Component {
           <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:16px">
             <div>
               <h1 style="margin:0;font-size:36px">Aiguilles</h1>
-              <p style="margin:6px 0 0" class="text-muted">Ta réserve d'aiguilles. Trie par longueur, et associe-les à tes projets.</p>
+              <p style="margin:6px 0 0" class="text-muted">Ta réserve d'aiguilles. Trie par taille, et associe-les à tes projets.</p>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn btn-secondary" onClick=${v.toggleManageLen} title="Gérer les longueurs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Longueurs</button>
-              <button class="btn btn-primary" onClick=${v.toggleAddNeedle}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une aiguille</button>
+              <button class="btn btn-secondary" onClick=${v.toggleManageSizes} title="Gérer les tailles"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Gérer</button>
+              ${v.needlesFilterBtn}
+              <button class="btn btn-primary" onClick=${v.openNeedleAdd}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une aiguille</button>
             </div>
           </div>
 
-          ${v.manageLen && html`
+          ${v.needlesFilterPanel}
+
+          ${v.manageSizes && html`
             <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:18px;animation:pop .2s ease both">
-              <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Longueurs (tags)</div>
+              <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Tailles (mm)</div>
               <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-                ${v.manageLengths.map(l=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${l.label}<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${l.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
-                ${v.manageLengths.length===0 && html`<span class="text-muted" style="font-size:12px">Aucune longueur</span>`}
+                ${v.manageSizesList.map(l=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${l.label} mm<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${l.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
+                ${v.manageSizesList.length===0 && html`<span class="text-muted" style="font-size:12px">Aucune taille</span>`}
               </div>
-              <div style="display:flex;gap:8px;max-width:320px"><input class="input" value=${v.newLength} onInput=${v.setNewLength} placeholder="ex. 40 cm" onKeyDown=${(e)=>{if(e.key==='Enter')v.addLength();}}/><button class="btn btn-primary" onClick=${v.addLength}>Ajouter</button></div>
+              <div style="display:flex;gap:8px;max-width:320px"><input class="input" type="number" step="0.25" value=${v.newSize} onInput=${v.setNewSize} placeholder="ex. 4.5" onKeyDown=${(e)=>{if(e.key==='Enter')v.addSize();}}/><button class="btn btn-primary" onClick=${v.addSize}>Ajouter</button></div>
             </div>`}
-
-          ${v.addNeedleOpen && html`
-            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:14px;animation:pop .2s ease both">
-              <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:14px">Nouvelle aiguille</div>
-              <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end">
-                <div class="field"><label>Marque</label><input class="input" value=${v.nd.brand} onInput=${v.setNBrand} placeholder="ChiaoGoo"/></div>
-                <div class="field"><label>Taille (mm)</label><input class="input" type="number" step="0.25" value=${v.nd.size} onInput=${v.setNSize} placeholder="4"/></div>
-                <div class="field"><label>Longueur</label>
-                  <select class="input" value=${v.nd.length} onChange=${v.setNLength}>
-                    <option value="">—</option>
-                    ${v.lengthOptions.map(l=>html`<option value=${l}>${l}</option>`)}
-                  </select>
-                </div>
-                <div class="field"><label>Type</label>${this.segToggle([{label:'Interchangeable',value:true},{label:'Fixe',value:false}],v.nd.interchangeable,v.setNInterVal,'100%')}</div>
-                <div style="display:flex;gap:8px;grid-column:1/-1;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.toggleAddNeedle}>Annuler</button><button class="btn btn-primary" onClick=${v.addNeedle}>Ajouter au stash</button></div>
-              </div>
-            </div>`}
-
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">${v.needleLenChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px">${v.needleIntChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}</div>
 
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px">
             ${v.needleRows.map(n=>html`
@@ -951,29 +926,12 @@ class App extends Component {
                   </div>
                   <div style="font-size:13px;margin-top:4px" class="text-muted">${n.brand}</div>
                   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
-                    <span class="tag tag-accent">${n.length}</span>
+                    ${n.length!=='—' && html`<span class="tag tag-accent">${n.length}</span>`}
                     ${n.interchangeable && html`<span class="tag tag-accent-2">Interchangeable</span>`}
                     ${!n.interchangeable && html`<span class="tag tag-neutral">Fixe</span>`}
                   </div>
                   <div style="font-size:11px;margin-top:12px;color:var(--color-accent-2-700)">${n.usedLabel}</div>
                 </div>
-                ${n.editing && html`
-                  <div style="padding:0 18px 18px">
-                    <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
-                      <div class="field" style="margin:0"><label>Marque</label><input class="input" value=${v.ned.brand} onInput=${v.setNEBrand}/></div>
-                      <div style="display:flex;gap:10px">
-                        <div class="field" style="margin:0;flex:1"><label>Taille (mm)</label><input class="input" type="number" step="0.25" value=${v.ned.size} onInput=${v.setNESize}/></div>
-                        <div class="field" style="margin:0;flex:1"><label>Longueur</label>
-                          <select class="input" value=${v.ned.length} onChange=${v.setNELength}>
-                            <option value="">—</option>
-                            ${v.lengthOptions.map(l=>html`<option value=${l}>${l}</option>`)}
-                          </select>
-                        </div>
-                      </div>
-                      <div class="field" style="margin:0"><label>Type</label>${this.segToggle([{label:'Interchangeable',value:true},{label:'Fixe',value:false}],v.ned.interchangeable,v.setNEInterVal,'100%')}</div>
-                      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.cancelEditNeedle}>Annuler</button><button class="btn btn-primary" onClick=${n.saveEdit}>Enregistrer</button></div>
-                    </div>
-                  </div>`}
               </div>`)}
             ${v.needlesEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucune aiguille. Ajoute ta première paire.</div>`}
             ${!v.needlesEmpty && v.needlesFilteredEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucune aiguille pour ce filtre.</div>`}
@@ -1261,6 +1219,21 @@ class App extends Component {
           <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.savePattern}>${v.patternEdit?'Enregistrer':'Ajouter'}</button></div>
         </div>
       </div>`}
+
+    ${v.needleDialog && this.renderModal({title:v.needleEdit?"Modifier l'aiguille":'Nouvelle aiguille',width:440,onBackdrop:v.closeNeedleDialog,
+      body:html`
+        <div class="field"><label>Marque</label><input class="input" value=${v.nd.brand} onInput=${v.setNBrand} placeholder="ChiaoGoo"/></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field"><label>Taille (mm)</label>
+            <select class="input" value=${v.nd.size} onChange=${v.setNSize}>
+              <option value="">—</option>
+              ${v.sizeOptions.map(s=>html`<option value=${s}>${s} mm</option>`)}
+            </select>
+          </div>
+          <div class="field"><label>Longueur</label><input class="input" value=${v.nd.length} onInput=${v.setNLength} placeholder="ex. 80 cm"/></div>
+        </div>
+        <div class="field"><label>Type</label>${this.segToggle([{label:'Interchangeable',value:true},{label:'Fixe',value:false}],v.nd.interchangeable,v.setNInterVal,'100%')}</div>`,
+      actions:html`<button class="btn btn-secondary" onClick=${v.closeNeedleDialog}>Annuler</button><button class="btn btn-primary" onClick=${v.saveNeedle}>${v.needleEdit?'Enregistrer':'Ajouter au stash'}</button>`})}
 
     ${v.pendingNav && this.renderModal({title:'Modifications non enregistrées',width:420,onBackdrop:v.cancelNav,
       body:html`<div class="dialog-body">Tu as des changements non enregistrés sur ce projet. Veux-tu les enregistrer avant de quitter ?</div>`,
