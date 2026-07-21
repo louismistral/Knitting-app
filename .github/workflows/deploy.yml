@@ -27,6 +27,34 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+
+      # GitHub Pages only serves one live site per repo, tied to whichever
+      # branch this workflow runs on. To still be able to compare versions,
+      # build extra refs into dist/preview/<slug>/ alongside the main build
+      # (relative asset paths make this work from any sub-path). Refs are
+      # pinned to specific commits, not branch names, so a later merge that
+      # moves a branch tip can't silently turn a preview into a duplicate of
+      # the current version.
+      - name: Build version previews
+        run: |
+          set -e
+          declare -A PREVIEWS=(
+            # Repo state right before the "editable patterns / tags / project
+            # editor rework" session — i.e. the pre-existing main version.
+            [c66a72ef1a23c2d9cb048672afe8851addd2f8b7]=ancienne-version
+          )
+          for ref in "${!PREVIEWS[@]}"; do
+            slug="${PREVIEWS[$ref]}"
+            echo "Building preview '$slug' from $ref"
+            git fetch --depth=1 origin "$ref"
+            worktree="/tmp/preview-$slug"
+            git worktree add --detach "$worktree" "$ref"
+            (cd "$worktree" && npm ci && npm run build)
+            mkdir -p "dist/preview/$slug"
+            cp -r "$worktree/dist/." "dist/preview/$slug/"
+            git worktree remove "$worktree" --force
+          done
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
