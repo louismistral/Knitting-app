@@ -33,8 +33,10 @@ calculés à la volée à partir des allocations, jamais stockés en double).
 Projet dédié **`maille-organic`** (org `louismistral's Org`, région `eu-west-3`).
 
 - **Tables** : `yarns`, `colorways` (coloris/dye lots d'une laine), `patterns`,
-  `projects`, `project_allocations` (laine ↔ projet), `project_photos`. Chaque
-  table a une colonne `user_id` et une policy RLS `user_id = auth.uid()`.
+  `projects`, `project_allocations` (laine ↔ projet), `project_photos`,
+  `needles` (réserve d'aiguilles : marque, taille mm, longueur, interchangeable)
+  et `project_needles` (aiguille ↔ projet). Chaque table a une colonne `user_id`
+  et une policy RLS `user_id = auth.uid()`.
 - **Storage** : buckets privés `patterns` et `photos`, fichiers rangés sous
   `<user_id>/...` ; policies RLS sur `storage.objects` limitées à ce dossier.
   L'app affiche les fichiers via des URLs signées (1h, régénérées au besoin).

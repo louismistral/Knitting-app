@@ -17,7 +17,7 @@ class App extends Component {
       authMode:'signin', authEmail:'', authPassword:'', authError:'', authBusy:false,
       // ---- data ----
       loaded:false,
-      stash:[], patterns:[], projects:[], signedUrls:{},
+      stash:[], patterns:[], projects:[], needles:[], signedUrls:{},
       // ---- UI ----
       zone:'home',
       expandedYarn:null, addYarnOpen:false,
@@ -25,11 +25,16 @@ class App extends Component {
       editingYarn:null, yarnEditDraft:null,
       cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
       editingProject:null, projectDraft:null, projectDraftInitial:null,
-      allocPick:{colorwayId:'',grams:''},
+      allocPick:{colorwayId:'',grams:''}, needlePick:'',
       patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
       libFilter:'Tous', libAuthor:'Tous',
+      // ---- needle stash ----
+      addNeedleOpen:false, needleDraft:this.blankNeedle(),
+      editingNeedle:null, needleEditDraft:null,
+      needleLenFilter:'Toutes', needleIntFilter:'Toutes',
+      manageLen:false, newLength:'',
       // ---- taxonomies + profil (stockés dans user_metadata) ----
-      categories:[], authors:[], displayName:'',
+      categories:[], authors:[], needleLengths:[], displayName:'',
       manageTax:false, newCategory:'', newAuthor:'',
       editingName:false, nameDraft:'',
       // ---- garde-fou navigation ----
@@ -39,6 +44,8 @@ class App extends Component {
   }
   blankYarn(){ return {brand:'',name:'',mps:'',gps:'',blend:'',color:'',hex:'#c67139',dyeLot:'',grams:''}; }
   blankPattern(){ return {name:'',category:'Pull',author:'',path:'',fileName:'',kind:''}; }
+  blankNeedle(){ return {brand:'',size:'',length:'',interchangeable:false}; }
+  standardLengths(){ return ['15 cm','20 cm','25 cm','30 cm','40 cm','60 cm','80 cm','100 cm','120 cm']; }
   today(){ return new Date().toISOString().slice(0,10); }
 
   // ---- auth lifecycle ----
@@ -49,8 +56,8 @@ class App extends Component {
     }).catch(()=>{ this.setState({sessionChecked:true}); });
     supabase.auth.onAuthStateChange((event,session)=>{
       if(event==='SIGNED_OUT'){
-        this.setState({session:null,sessionChecked:true,loaded:false,stash:[],patterns:[],projects:[],signedUrls:{},
-          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false});
+        this.setState({session:null,sessionChecked:true,loaded:false,stash:[],patterns:[],projects:[],needles:[],signedUrls:{},
+          zone:'home',editingProject:null,projectDraft:null,expandedYarn:null,addYarnOpen:false,patternDialog:false,addNeedleOpen:false,editingNeedle:null});
       } else if(session){
         this.setState({session,sessionChecked:true});
         if(!this.state.loaded) this.loadAll();
@@ -94,21 +101,24 @@ class App extends Component {
   async loadAll(){
     if(this._loadingData) return;
     this._loadingData=true;
-    const [yq,pq,prq]=await Promise.all([
+    const [yq,pq,prq,nq]=await Promise.all([
       supabase.from('yarns').select('*, colorways(*)').order('created_at',{ascending:false}),
       supabase.from('patterns').select('*').order('created_at',{ascending:false}),
-      supabase.from('projects').select('*, project_allocations(*), project_photos(*)').order('created_at',{ascending:false}),
+      supabase.from('projects').select('*, project_allocations(*), project_photos(*), project_needles(*)').order('created_at',{ascending:false}),
+      supabase.from('needles').select('*').order('created_at',{ascending:false}),
     ]);
     const stash=(yq.data||[]).map(y=>({id:y.id,brand:y.brand,name:y.name,mps:Number(y.meters_per_skein)||0,gps:Number(y.grams_per_skein)||0,blend:y.blend,
       colorways:(y.colorways||[]).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at))
         .map(c=>({id:c.id,color:c.color,hex:c.hex,dyeLot:c.dye_lot,grams:Number(c.grams)||0}))}));
     const patterns=(pq.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,author:p.author,path:p.file_path||'',fileName:p.file_name||'',kind:p.file_kind||''}));
+    const needles=(nq.data||[]).map(n=>({id:n.id,brand:n.brand||'',size:n.size_mm===null?'':String(n.size_mm),length:n.length||'',interchangeable:!!n.interchangeable}));
     const projects=(prq.data||[]).map(pr=>({id:pr.id,name:pr.name,patternId:pr.pattern_id,size:pr.size,
       gauge:pr.gauge===null?'':String(pr.gauge), needle:pr.needle_size===null?'':String(pr.needle_size),
       startDate:pr.start_date,endDate:pr.end_date,notes:pr.notes,
       allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
+      needleLinks:(pr.project_needles||[]).map(pn=>({rowId:pn.id,needleId:pn.needle_id})),
       photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
-    this.setState({stash,patterns,projects,loaded:true, ...this.deriveMeta(patterns)});
+    this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns)});
     this._loadingData=false;
     this.refreshSignedUrls();
   }
@@ -120,7 +130,8 @@ class App extends Component {
     const defaults=['Pull','Gilet','Bonnet','Chaussettes','Écharpe','Châle','Accessoire','Autre'];
     const categories=Array.isArray(meta.categories)&&meta.categories.length?meta.categories.slice():Array.from(new Set([...defaults,...usedCats]));
     const authors=Array.isArray(meta.authors)?meta.authors.slice():usedAuthors;
-    return {categories,authors,displayName:meta.display_name||''};
+    const needleLengths=Array.isArray(meta.needle_lengths)&&meta.needle_lengths.length?meta.needle_lengths.slice():this.standardLengths();
+    return {categories,authors,needleLengths,displayName:meta.display_name||''};
   }
   async saveMeta(patch){
     this.setState(patch);
@@ -280,9 +291,58 @@ class App extends Component {
   setNameDraft=(e)=>this.setState({nameDraft:e.target.value});
   saveName=async()=>{ const n=this.state.nameDraft.trim(); await this.saveMeta({display_name:n}); this.setState({editingName:false}); };
 
+  // ---- needle stash ----
+  toggleAddNeedle=()=>this.setState(s=>({addNeedleOpen:!s.addNeedleOpen,needleDraft:this.blankNeedle()}));
+  setNeedleDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleDraft:{...s.needleDraft,[f]:v}})); };
+  addNeedle=async()=>{ const d=this.state.needleDraft; if(d.size===''&&!d.brand.trim()) return;
+    const uid=this.state.session.user.id; const len=(d.length||'').trim();
+    if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
+    const {data:row}=await supabase.from('needles').insert({user_id:uid,brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:len,interchangeable:!!d.interchangeable}).select().single();
+    if(!row) return;
+    const needle={id:row.id,brand:row.brand||'',size:row.size_mm===null?'':String(row.size_mm),length:row.length||'',interchangeable:!!row.interchangeable};
+    this.setState(s=>({needles:[needle,...s.needles],needleDraft:this.blankNeedle(),addNeedleOpen:false})); };
+  startEditNeedle=(id)=>()=>{ const n=this.state.needles.find(x=>x.id===id);
+    this.setState({editingNeedle:id,needleEditDraft:{brand:n.brand,size:n.size,length:n.length,interchangeable:n.interchangeable}}); };
+  cancelEditNeedle=()=>this.setState({editingNeedle:null,needleEditDraft:null});
+  setNeedleEditDraft=(f)=>(e)=>{ const v=f==='interchangeable'?e.target.checked:e.target.value; this.setState(s=>({needleEditDraft:{...s.needleEditDraft,[f]:v}})); };
+  saveEditNeedle=(id)=>async()=>{ const d=this.state.needleEditDraft; if(!d) return; const len=(d.length||'').trim();
+    if(len && !this.state.needleLengths.includes(len)) this.saveMeta({needle_lengths:[...this.state.needleLengths,len]});
+    const cols={brand:d.brand.trim(),size_mm:d.size===''?0:Number(d.size),length:len,interchangeable:!!d.interchangeable};
+    await supabase.from('needles').update(cols).eq('id',id);
+    this.setState(s=>({needles:s.needles.map(n=>n.id!==id?n:{id,brand:cols.brand,size:cols.size_mm===0&&d.size===''?'':String(cols.size_mm),length:cols.length,interchangeable:cols.interchangeable}),editingNeedle:null,needleEditDraft:null})); };
+  deleteNeedle=(id)=>async(e)=>{ e.stopPropagation(); await supabase.from('needles').delete().eq('id',id);
+    this.setState(s=>({needles:s.needles.filter(n=>n.id!==id),
+      projects:s.projects.map(p=>({...p,needleLinks:(p.needleLinks||[]).filter(l=>l.needleId!==id)})),
+      projectDraft:s.projectDraft?{...s.projectDraft,needleLinks:(s.projectDraft.needleLinks||[]).filter(l=>l.needleId!==id)}:s.projectDraft})); };
+  setNeedleLenFilter=(l)=>()=>this.setState({needleLenFilter:l});
+  setNeedleIntFilter=(v)=>()=>this.setState({needleIntFilter:v});
+  // gestion des tags de longueur
+  toggleManageLen=()=>this.setState(s=>({manageLen:!s.manageLen}));
+  setNewLength=(e)=>this.setState({newLength:e.target.value});
+  addLength=async()=>{ const l=this.state.newLength.trim(); if(!l||this.state.needleLengths.includes(l)){ this.setState({newLength:''}); return; }
+    this.setState({newLength:''}); await this.saveMeta({needle_lengths:[...this.state.needleLengths,l]}); };
+  deleteLength=(l)=>async()=>{ await this.saveMeta({needle_lengths:this.state.needleLengths.filter(x=>x!==l)});
+    this.setState(s=>({needleLenFilter:s.needleLenFilter===l?'Toutes':s.needleLenFilter})); };
+  needleLabel(n){ const parts=[]; if(n.size!=='') parts.push(n.size+' mm'); if(n.length) parts.push(n.length); const head=n.brand||'Aiguille'; return head+(parts.length?' · '+parts.join(' · '):''); }
+
+  // ---- association aiguille <-> projet ----
+  setNeedlePick=(e)=>this.setState({needlePick:e.target.value});
+  addProjectNeedle=async()=>{ const nid=this.state.needlePick; if(!nid) return;
+    const d=this.state.projectDraft;
+    if((d.needleLinks||[]).some(l=>l.needleId===nid)){ this.setState({needlePick:''}); return; }
+    let rowId=null;
+    if(d.id){ const uid=this.state.session.user.id;
+      const {data}=await supabase.from('project_needles').insert({user_id:uid,project_id:d.id,needle_id:nid}).select().single();
+      rowId=data?data.id:null;
+    }
+    this.setState(s=>({projectDraft:{...s.projectDraft,needleLinks:[...(s.projectDraft.needleLinks||[]),{rowId,needleId:nid}]},needlePick:''})); };
+  removeProjectNeedle=(i)=>async()=>{ const d=this.state.projectDraft; const l=d.needleLinks[i];
+    if(d.id && l.rowId) await supabase.from('project_needles').delete().eq('id',l.rowId);
+    this.setState(s=>({projectDraft:{...s.projectDraft,needleLinks:s.projectDraft.needleLinks.filter((x,idx)=>idx!==i)}})); };
+
   // ---- projects ----
-  newProject=()=>{ const draft={id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]};
-    this.setState({zone:'projects',editingProject:'new',projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''}}); };
+  newProject=()=>{ const draft={id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],needleLinks:[],photos:[]};
+    this.setState({zone:'projects',editingProject:'new',projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''},needlePick:''}); };
   editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); const draft=this.dedupeAllocs(JSON.parse(JSON.stringify(p)));
     this.setState({zone:'projects',editingProject:id,projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''}});
     this.ensurePatternUrl(draft.patternId); };
@@ -317,7 +377,13 @@ class App extends Component {
           .insert(d.photos.map(ph=>({user_id:uid,project_id:row.id,path:ph.path,name:ph.name,type:ph.type}))).select();
         if(photoRows) photos=photoRows.map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}));
       }
-      const project={...d,id:row.id,allocations,photos};
+      let needleLinks=d.needleLinks||[];
+      if(needleLinks.length){
+        const {data:nRows}=await supabase.from('project_needles')
+          .insert(needleLinks.map(l=>({user_id:uid,project_id:row.id,needle_id:l.needleId}))).select();
+        if(nRows) needleLinks=nRows.map(pn=>({rowId:pn.id,needleId:pn.needle_id}));
+      }
+      const project={...d,id:row.id,allocations,photos,needleLinks};
       this.setState(s=>({projects:[project,...s.projects],editingProject:null,projectDraft:null}));
     }
   };
@@ -439,6 +505,22 @@ class App extends Component {
         usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id),edit:this.startEditPattern(p.id)};
     });
 
+    // ---- needle stash ----
+    const needleUsedIn=(id)=>st.projects.filter(p=>(p.needleLinks||[]).some(l=>l.needleId===id)).length;
+    const filteredNeedles=st.needles.filter(n=>
+      (st.needleLenFilter==='Toutes'||n.length===st.needleLenFilter) &&
+      (st.needleIntFilter==='Toutes'|| (st.needleIntFilter==='Interchangeables'?n.interchangeable:!n.interchangeable)));
+    const needleRows=filteredNeedles.map(n=>({id:n.id,brand:n.brand||'Sans marque',size:n.size!==''?n.size+' mm':'—',length:n.length||'—',
+      interchangeable:n.interchangeable,usedLabel:needleUsedIn(n.id)>0?`${needleUsedIn(n.id)} projet(s)`:'Non utilisée',
+      editing:st.editingNeedle===n.id,startEdit:this.startEditNeedle(n.id),saveEdit:this.saveEditNeedle(n.id),del:this.deleteNeedle(n.id)}));
+    const usedLengths=st.needles.map(n=>n.length).filter(Boolean);
+    const allLengths=Array.from(new Set([...st.needleLengths,...usedLengths]));
+    const lenChipStyle=(active)=>`cursor:pointer;padding:6px 13px;border-radius:999px;font-size:12.5px;border:1px solid ${active?'var(--color-accent)':'var(--color-divider)'};background:${active?'var(--color-accent)':'transparent'};color:${active?'var(--color-bg)':'var(--color-text)'}`;
+    const needleLenChips=['Toutes',...allLengths].map(l=>({label:l,pick:this.setNeedleLenFilter(l),style:lenChipStyle(st.needleLenFilter===l)}));
+    const needleIntChips=['Toutes','Interchangeables','Fixes'].map(v=>({label:v,pick:this.setNeedleIntFilter(v),
+      style:`cursor:pointer;padding:6px 13px;border-radius:999px;font-size:12.5px;border:1px solid ${st.needleIntFilter===v?'var(--color-accent-2)':'var(--color-divider)'};background:${st.needleIntFilter===v?'var(--color-accent-2)':'transparent'};color:${st.needleIntFilter===v?'var(--color-bg)':'var(--color-text)'}`}));
+    const manageLengths=allLengths.map(l=>({label:l,del:this.deleteLength(l)}));
+
     let detail=null;
     if(st.projectDraft){ const d=st.projectDraft;
       const allocRows=d.allocations.map((a,i)=>{ const e=map[a.colorwayId];
@@ -453,9 +535,14 @@ class App extends Component {
       const patIsImg=!!(selP&&selP.kind==='img');
       const patIsPdf=!!(selP&&selP.kind==='pdf');
       const patImgEl=(patIsImg&&patUrl)?h('img',{src:patUrl,style:{width:'100%',display:'block',borderRadius:'14px'}}):null;
+      const needleLinks=(d.needleLinks||[]).map((l,i)=>{ const n=st.needles.find(x=>x.id===l.needleId);
+        return {label:n?this.needleLabel(n):'Aiguille supprimée',interchangeable:!!(n&&n.interchangeable),remove:this.removeProjectNeedle(i)}; });
+      const linkedIds=new Set((d.needleLinks||[]).map(l=>l.needleId));
+      const needleOptions=st.needles.filter(n=>!linkedIds.has(n.id)).map(n=>({id:n.id,label:this.needleLabel(n)}));
       detail={id:d.id,isNew:!d.id,name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
         startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos,
         allocRows,options,pickId:st.allocPick.colorwayId,pickGrams:st.allocPick.grams,
+        needleLinks,needleOptions,needlePickId:st.needlePick,hasNeedleStash:st.needles.length>0,
         patternOptions:st.patterns,hasPattern:!!selP,patternName:selP?selP.name:'',patternMeta:this.patMeta(d.patternId),
         patIsImg,patIsPdf,patUrl,patImgEl,
         totalGrams:projGrams(d)};
@@ -474,10 +561,11 @@ class App extends Component {
     const memberSince=createdAt? ('Membre depuis '+new Date(createdAt).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})):'';
 
     return {
-      goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goProjects:this.go('projects'),goProfil:this.go('profil'),
-      navHome:this.navStyle('home'),navLibrary:this.navStyle('library'),navStash:this.navStyle('stash'),navProjects:this.navStyle('projects'),navProfil:this.navStyle('profil'),
+      goHome:this.go('home'),goLibrary:this.go('library'),goStash:this.go('stash'),goNeedles:this.go('needles'),goProjects:this.go('projects'),goProfil:this.go('profil'),
+      navHome:this.navStyle('home'),navLibrary:this.navStyle('library'),navStash:this.navStyle('stash'),navNeedles:this.navStyle('needles'),navProjects:this.navStyle('projects'),navProfil:this.navStyle('profil'),
       homeShow:st.zone==='home'?'':'display:none', libraryShow:st.zone==='library'?'':'display:none',
       stashShow:st.zone==='stash'?'':'display:none', profilShow:st.zone==='profil'?'':'display:none',
+      needlesShow:st.zone==='needles'?'':'display:none',
       projectsShow:(st.zone==='projects'&&!st.projectDraft)?'':'display:none', detailShow:(st.zone==='projects'&&st.projectDraft)?'':'display:none',
       todayStr:new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}),
       statCompleted:completed,statSkeins:gS.toFixed(1),statGrams:this.fmt(gG),statMeters:this.fmt(gM),
@@ -504,8 +592,17 @@ class App extends Component {
       setStart:this.setPD('startDate'),setNotes:this.setPD('notes'),
       cancelEdit:this.cancelEdit,saveProject:this.saveProject,finishProject:this.finishProject,reopenProject:this.reopenProject,deleteProject:this.deleteProject,
       setPickId:this.setAllocPick('colorwayId'),setPickGrams:this.setAllocPick('grams'),addAlloc:this.addAlloc,
+      setNeedlePick:this.setNeedlePick,addProjectNeedle:this.addProjectNeedle,
       onProjectPhoto:this.onProjectPhoto,
       pendingNav:st.pendingNav,confirmNavSave:this.confirmNavSave,confirmNavDiscard:this.confirmNavDiscard,cancelNav:this.cancelNav,
+      // needle stash
+      needleRows,needlesEmpty:st.needles.length===0,needlesFilteredEmpty:needleRows.length===0,
+      addNeedleOpen:st.addNeedleOpen,toggleAddNeedle:this.toggleAddNeedle,addNeedle:this.addNeedle,nd:st.needleDraft,
+      setNBrand:this.setNeedleDraft('brand'),setNSize:this.setNeedleDraft('size'),setNLength:this.setNeedleDraft('length'),setNInter:this.setNeedleDraft('interchangeable'),
+      ned:st.needleEditDraft,cancelEditNeedle:this.cancelEditNeedle,
+      setNEBrand:this.setNeedleEditDraft('brand'),setNESize:this.setNeedleEditDraft('size'),setNELength:this.setNeedleEditDraft('length'),setNEInter:this.setNeedleEditDraft('interchangeable'),
+      needleLenChips,needleIntChips,lengthOptions:allLengths,
+      manageLen:st.manageLen,toggleManageLen:this.toggleManageLen,manageLengths,newLength:st.newLength,setNewLength:this.setNewLength,addLength:this.addLength,
       profPatterns:st.patterns.length,profYarns:st.stash.length,
       profColorways:st.stash.reduce((s,y)=>s+y.colorways.length,0),
       profOwned:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0)),
@@ -581,6 +678,7 @@ class App extends Component {
         <button class="nav-btn" aria-label="Accueil" title="Accueil" onClick=${v.goHome} style=${v.navHome}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg><span class="nav-label">Accueil</span></button>
         <button class="nav-btn" aria-label="Bibliothèque" title="Bibliothèque" onClick=${v.goLibrary} style=${v.navLibrary}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg><span class="nav-label">Bibliothèque</span></button>
         <button class="nav-btn" aria-label="Yarn Stash" title="Yarn Stash" onClick=${v.goStash} style=${v.navStash}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 8c4 3 8 5 11 3M5 14c5 2 9 1 13-4M9 20c1-6 3-10 7-13"/></svg><span class="nav-label">Yarn Stash</span></button>
+        <button class="nav-btn" aria-label="Aiguilles" title="Aiguilles" onClick=${v.goNeedles} style=${v.navNeedles}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 20 4"/><path d="M14 10l4-4"/><circle cx="4.5" cy="19.5" r="1.4"/><path d="M9 15 6 18"/></svg><span class="nav-label">Aiguilles</span></button>
         <button class="nav-btn" aria-label="Projets" title="Projets" onClick=${v.goProjects} style=${v.navProjects}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="nav-label">Projets</span></button>
         <button class="nav-btn" aria-label="Profil" title="Profil" onClick=${v.goProfil} style=${v.navProfil}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg><span class="nav-label">Profil</span></button>
         <div class="side-summary" style="margin-top:auto;padding:14px 12px;border-radius:20px;background:var(--color-accent-2-100)">
@@ -724,6 +822,90 @@ class App extends Component {
           </div>
         </section>
 
+        <section style=${v.needlesShow}>
+          <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:16px">
+            <div>
+              <h1 style="margin:0;font-size:36px">Aiguilles</h1>
+              <p style="margin:6px 0 0" class="text-muted">Ta réserve d'aiguilles. Trie par longueur, et associe-les à tes projets.</p>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary" onClick=${v.toggleManageLen} title="Gérer les longueurs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Longueurs</button>
+              <button class="btn btn-primary" onClick=${v.toggleAddNeedle}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter une aiguille</button>
+            </div>
+          </div>
+
+          ${v.manageLen && html`
+            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:18px;animation:pop .2s ease both">
+              <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Longueurs (tags)</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                ${v.manageLengths.map(l=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${l.label}<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${l.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
+                ${v.manageLengths.length===0 && html`<span class="text-muted" style="font-size:12px">Aucune longueur</span>`}
+              </div>
+              <div style="display:flex;gap:8px;max-width:320px"><input class="input" value=${v.newLength} onInput=${v.setNewLength} placeholder="ex. 40 cm" onKeyDown=${(e)=>{if(e.key==='Enter')v.addLength();}}/><button class="btn btn-primary" onClick=${v.addLength}>Ajouter</button></div>
+            </div>`}
+
+          ${v.addNeedleOpen && html`
+            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:14px;animation:pop .2s ease both">
+              <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:14px">Nouvelle aiguille</div>
+              <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end">
+                <div class="field"><label>Marque</label><input class="input" value=${v.nd.brand} onInput=${v.setNBrand} placeholder="ChiaoGoo"/></div>
+                <div class="field"><label>Taille (mm)</label><input class="input" type="number" step="0.25" value=${v.nd.size} onInput=${v.setNSize} placeholder="4"/></div>
+                <div class="field"><label>Longueur</label>
+                  <select class="input" value=${v.nd.length} onChange=${v.setNLength}>
+                    <option value="">—</option>
+                    ${v.lengthOptions.map(l=>html`<option value=${l}>${l}</option>`)}
+                  </select>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;padding-bottom:8px;cursor:pointer"><input type="checkbox" checked=${v.nd.interchangeable} onChange=${v.setNInter} style="width:18px;height:18px;accent-color:var(--color-accent);cursor:pointer"/>Interchangeable</label>
+                <div style="display:flex;gap:8px;grid-column:1/-1;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.toggleAddNeedle}>Annuler</button><button class="btn btn-primary" onClick=${v.addNeedle}>Ajouter au stash</button></div>
+              </div>
+            </div>`}
+
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">${v.needleLenChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px">${v.needleIntChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}</div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px">
+            ${v.needleRows.map(n=>html`
+              <div style="border-radius:20px;background:var(--color-surface);box-shadow:var(--shadow-sm);overflow:hidden;animation:pop .2s ease both">
+                <div style="padding:16px 18px">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+                    <div style="font-family:var(--font-heading);font-size:24px;line-height:1">${n.size}</div>
+                    <div style="display:flex;gap:2px">
+                      <button class="btn btn-icon btn-ghost" onClick=${n.startEdit} title="Modifier" style="margin:-4px 0 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                      <button class="btn btn-icon btn-ghost" onClick=${n.del} title="Supprimer" style="margin:-4px -6px 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                    </div>
+                  </div>
+                  <div style="font-size:13px;margin-top:4px" class="text-muted">${n.brand}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
+                    <span class="tag tag-accent">${n.length}</span>
+                    ${n.interchangeable && html`<span class="tag tag-accent-2">Interchangeable</span>`}
+                    ${!n.interchangeable && html`<span class="tag tag-neutral">Fixe</span>`}
+                  </div>
+                  <div style="font-size:11px;margin-top:12px;color:var(--color-accent-2-700)">${n.usedLabel}</div>
+                </div>
+                ${n.editing && html`
+                  <div style="padding:0 18px 18px">
+                    <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
+                      <div class="field" style="margin:0"><label>Marque</label><input class="input" value=${v.ned.brand} onInput=${v.setNEBrand}/></div>
+                      <div style="display:flex;gap:10px">
+                        <div class="field" style="margin:0;flex:1"><label>Taille (mm)</label><input class="input" type="number" step="0.25" value=${v.ned.size} onInput=${v.setNESize}/></div>
+                        <div class="field" style="margin:0;flex:1"><label>Longueur</label>
+                          <select class="input" value=${v.ned.length} onChange=${v.setNELength}>
+                            <option value="">—</option>
+                            ${v.lengthOptions.map(l=>html`<option value=${l}>${l}</option>`)}
+                          </select>
+                        </div>
+                      </div>
+                      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer"><input type="checkbox" checked=${v.ned.interchangeable} onChange=${v.setNEInter} style="width:18px;height:18px;accent-color:var(--color-accent);cursor:pointer"/>Interchangeable</label>
+                      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.cancelEditNeedle}>Annuler</button><button class="btn btn-primary" onClick=${n.saveEdit}>Enregistrer</button></div>
+                    </div>
+                  </div>`}
+              </div>`)}
+            ${v.needlesEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucune aiguille. Ajoute ta première paire.</div>`}
+            ${!v.needlesEmpty && v.needlesFilteredEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucune aiguille pour ce filtre.</div>`}
+          </div>
+        </section>
+
         <section style=${v.libraryShow}>
           <div class="zone-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px">
             <div>
@@ -834,6 +1016,31 @@ class App extends Component {
                     <div class="field" style="grid-column:span 2"><label>Statut</label><input class="input" value=${v.detail.done?'Terminé':'En cours'} disabled style="opacity:.7"/></div>
                   </div>
                   <div class="field" style="margin-top:14px"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
+
+                  <div style="margin-top:16px;border-top:1px solid var(--color-divider);padding-top:14px">
+                    <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 70%,transparent);margin-bottom:10px">Aiguilles associées</div>
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+                      ${v.detail.needleLinks.map(n=>html`
+                        <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:14px;background:var(--color-bg)">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M4 20 20 4"/><path d="M14 10l4-4"/></svg>
+                          <div style="flex:1;min-width:0;font-size:13.5px;font-weight:600">${n.label}</div>
+                          ${n.interchangeable && html`<span class="tag tag-accent-2">Interch.</span>`}
+                          <button class="btn btn-icon btn-ghost" style="width:28px;height:28px" onClick=${n.remove}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                        </div>`)}
+                      ${v.detail.needleLinks.length===0 && html`<div class="text-muted" style="font-size:13px">Aucune aiguille associée.</div>`}
+                    </div>
+                    ${v.detail.hasNeedleStash && html`
+                      <div style="display:flex;gap:10px;align-items:flex-end">
+                        <div class="field" style="margin:0;flex:1"><label>Depuis le stash d'aiguilles</label>
+                          <select class="input" value=${v.detail.needlePickId} onChange=${v.setNeedlePick}>
+                            <option value="">Choisir une aiguille…</option>
+                            ${v.detail.needleOptions.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
+                          </select>
+                        </div>
+                        <button class="btn btn-secondary" onClick=${v.addProjectNeedle}>Associer</button>
+                      </div>`}
+                    ${!v.detail.hasNeedleStash && html`<div class="text-muted" style="font-size:11.5px">Ajoute des aiguilles dans l'onglet « Aiguilles » pour pouvoir les associer.</div>`}
+                  </div>
                 </div>
 
                 <!-- Section 2 · Patron -->
