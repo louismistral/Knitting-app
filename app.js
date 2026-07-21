@@ -22,11 +22,18 @@ class App extends Component {
       zone:'home',
       expandedYarn:null, addYarnOpen:false,
       yarnDraft:this.blankYarn(),
+      editingYarn:null, yarnEditDraft:null,
       cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}, cwFor:null,
-      editingProject:null, projectDraft:null,
+      editingProject:null, projectDraft:null, projectDraftInitial:null,
       allocPick:{colorwayId:'',grams:''},
-      patternDialog:false, patternDraft:this.blankPattern(),
-      libFilter:'Tous',
+      patternDialog:false, patternDraft:this.blankPattern(), patternEditId:null,
+      libFilter:'Tous', libAuthor:'Tous',
+      // ---- taxonomies + profil (stockés dans user_metadata) ----
+      categories:[], authors:[], displayName:'',
+      manageTax:false, newCategory:'', newAuthor:'',
+      editingName:false, nameDraft:'',
+      // ---- garde-fou navigation ----
+      pendingNav:null,
     };
     this._loadingData=false;
   }
@@ -101,9 +108,23 @@ class App extends Component {
       startDate:pr.start_date,endDate:pr.end_date,notes:pr.notes,
       allocations:(pr.project_allocations||[]).map(a=>({rowId:a.id,colorwayId:a.colorway_id,grams:Number(a.grams)||0})),
       photos:(pr.project_photos||[]).map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type}))}));
-    this.setState({stash,patterns,projects,loaded:true});
+    this.setState({stash,patterns,projects,loaded:true, ...this.deriveMeta(patterns)});
     this._loadingData=false;
     this.refreshSignedUrls();
+  }
+  deriveMeta(patterns){
+    const u=this.state.session&&this.state.session.user;
+    const meta=(u&&u.user_metadata)||{};
+    const usedCats=Array.from(new Set(patterns.map(p=>p.category).filter(Boolean)));
+    const usedAuthors=Array.from(new Set(patterns.map(p=>p.author).filter(Boolean)));
+    const defaults=['Pull','Gilet','Bonnet','Chaussettes','Écharpe','Châle','Accessoire','Autre'];
+    const categories=Array.isArray(meta.categories)&&meta.categories.length?meta.categories.slice():Array.from(new Set([...defaults,...usedCats]));
+    const authors=Array.isArray(meta.authors)?meta.authors.slice():usedAuthors;
+    return {categories,authors,displayName:meta.display_name||''};
+  }
+  async saveMeta(patch){
+    this.setState(patch);
+    try{ await supabase.auth.updateUser({data:patch}); }catch(e){}
   }
   async refreshSignedUrls(){
     const patternPaths=[...new Set(this.state.patterns.filter(p=>p.kind==='img'&&p.path).map(p=>p.path))];
@@ -132,7 +153,17 @@ class App extends Component {
   fmt(n){ n=Math.round(n); return n>=1000? (n/1000).toFixed(n%1000===0?0:1)+' k':(''+n); }
 
   // ---- nav ----
-  go=(z)=>()=>this.setState({zone:z,editingProject:null,projectDraft:null});
+  projectDirty(){ const d=this.state.projectDraft; if(!d) return false; return JSON.stringify(d)!==this.state.projectDraftInitial; }
+  go=(z)=>()=>{
+    if(this.state.projectDraft && this.projectDirty()){ this.setState({pendingNav:z}); return; }
+    this.setState({zone:z,editingProject:null,projectDraft:null,projectDraftInitial:null});
+  };
+  confirmNavSave=async()=>{ const z=this.state.pendingNav; await this.saveProject();
+    this.setState({pendingNav:null,zone:z,editingProject:null,projectDraft:null,projectDraftInitial:null}); };
+  confirmNavDiscard=()=>{ const z=this.state.pendingNav; const d=this.state.projectDraft;
+    if(d && !d.id && d.photos.length) d.photos.forEach(ph=>supabase.storage.from('photos').remove([ph.path]));
+    this.setState({pendingNav:null,zone:z,editingProject:null,projectDraft:null,projectDraftInitial:null}); };
+  cancelNav=()=>this.setState({pendingNav:null});
   navStyle(z){
     const on=this.state.zone===z && !(z==='projects'&&this.state.editingProject);
     const onProj = z==='projects' && (this.state.zone==='projects');
@@ -159,6 +190,14 @@ class App extends Component {
   toggleYarn=(id)=>()=>this.setState(s=>({expandedYarn:s.expandedYarn===id?null:id}));
   deleteYarn=(id)=>async(e)=>{ e.stopPropagation(); await supabase.from('yarns').delete().eq('id',id);
     this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
+  startEditYarn=(id)=>(e)=>{ e.stopPropagation(); const y=this.state.stash.find(x=>x.id===id);
+    this.setState({editingYarn:id,yarnEditDraft:{brand:y.brand,name:y.name,mps:String(y.mps||''),gps:String(y.gps||''),blend:y.blend||''}}); };
+  cancelEditYarn=()=>this.setState({editingYarn:null,yarnEditDraft:null});
+  setYarnEditDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({yarnEditDraft:{...s.yarnEditDraft,[f]:v}})); };
+  saveEditYarn=(id)=>async()=>{ const d=this.state.yarnEditDraft; if(!d||!d.name.trim()||!d.brand.trim()) return;
+    const cols={brand:d.brand.trim(),name:d.name.trim(),meters_per_skein:Number(d.mps)||0,grams_per_skein:Number(d.gps)||0,blend:d.blend.trim()};
+    await supabase.from('yarns').update(cols).eq('id',id);
+    this.setState(s=>({stash:s.stash.map(y=>y.id!==id?y:{...y,brand:cols.brand,name:cols.name,mps:cols.meters_per_skein,gps:cols.grams_per_skein,blend:cols.blend}),editingYarn:null,yarnEditDraft:null})); };
   setCwGrams=(yid,cid)=>async(e)=>{ const v=Number(e.target.value)||0; await supabase.from('colorways').update({grams:v}).eq('id',cid);
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
   startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:''}});
@@ -173,41 +212,87 @@ class App extends Component {
     this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.filter(c=>c.id!==cid)})})); };
 
   // ---- patterns ----
-  openPattern=()=>this.setState({patternDialog:true,patternDraft:this.blankPattern()});
-  closePattern=()=>{ const d=this.state.patternDraft; if(d.path) supabase.storage.from('patterns').remove([d.path]);
-    this.setState({patternDialog:false}); };
+  openPattern=()=>this.setState({patternDialog:true,patternDraft:this.blankPattern(),patternEditId:null,patternOrigPath:''});
+  startEditPattern=(id)=>(e)=>{ e.stopPropagation(); const p=this.state.patterns.find(x=>x.id===id);
+    this.setState({patternDialog:true,patternEditId:id,patternOrigPath:p.path||'',
+      patternDraft:{name:p.name,category:p.category,author:p.author||'',path:p.path||'',fileName:p.fileName||'',kind:p.kind||''}}); };
+  closePattern=()=>{ const d=this.state.patternDraft;
+    if(d.path && d.path!==this.state.patternOrigPath) supabase.storage.from('patterns').remove([d.path]);
+    this.setState({patternDialog:false,patternEditId:null,patternOrigPath:''}); };
   setPatternDraft=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({patternDraft:{...s.patternDraft,[f]:v}})); };
   onPatternFile=async(e)=>{ const file=e.target.files[0]; if(!file) return;
     const isImg=file.type.startsWith('image'); const kind=isImg?'img':'pdf'; const path=this.storagePath(file);
+    const prev=this.state.patternDraft.path;
     const {error}=await supabase.storage.from('patterns').upload(path,file,{contentType:file.type||undefined});
     if(error) return;
+    if(prev && prev!==this.state.patternOrigPath) supabase.storage.from('patterns').remove([prev]);
     const url=isImg?await this.getSignedUrl('patterns',path):'';
     this.setState(s=>({
       patternDraft:{...s.patternDraft,path,kind,fileName:file.name,name:s.patternDraft.name||file.name.replace(/\.[^.]+$/,'')},
       signedUrls:url?{...s.signedUrls,[path]:url}:s.signedUrls,
     }));
   };
-  addPattern=async()=>{ const d=this.state.patternDraft; if(!d.name.trim()) return;
+  savePattern=async()=>{ const d=this.state.patternDraft; if(!d.name.trim()) return;
     const uid=this.state.session.user.id;
-    const {data:row}=await supabase.from('patterns').insert({user_id:uid,name:d.name.trim(),category:d.category,author:d.author.trim(),
-      file_path:d.path||null,file_name:d.fileName||null,file_kind:d.kind||null}).select().single();
-    if(!row) return;
-    const pat={id:row.id,name:row.name,category:row.category,author:row.author,path:row.file_path||'',fileName:row.file_name||'',kind:row.file_kind||''};
-    this.setState(s=>({patterns:[pat,...s.patterns],patternDialog:false})); };
+    const cat=(d.category||'').trim(); const author=(d.author||'').trim();
+    // Enregistre catégorie / auteur dans les listes gérées s'ils sont nouveaux.
+    const metaPatch={};
+    if(cat && !this.state.categories.includes(cat)) metaPatch.categories=[...this.state.categories,cat];
+    if(author && !this.state.authors.includes(author)) metaPatch.authors=[...this.state.authors,author];
+    if(Object.keys(metaPatch).length) this.saveMeta(metaPatch);
+    if(this.state.patternEditId){
+      const id=this.state.patternEditId;
+      const cols={name:d.name.trim(),category:cat,author,file_path:d.path||null,file_name:d.fileName||null,file_kind:d.kind||null};
+      await supabase.from('patterns').update(cols).eq('id',id);
+      if(this.state.patternOrigPath && this.state.patternOrigPath!==d.path) supabase.storage.from('patterns').remove([this.state.patternOrigPath]);
+      this.setState(s=>({patterns:s.patterns.map(p=>p.id!==id?p:{...p,name:cols.name,category:cols.category,author:cols.author,path:d.path||'',fileName:d.fileName||'',kind:d.kind||''}),patternDialog:false,patternEditId:null,patternOrigPath:''}));
+    } else {
+      const {data:row}=await supabase.from('patterns').insert({user_id:uid,name:d.name.trim(),category:cat,author,
+        file_path:d.path||null,file_name:d.fileName||null,file_kind:d.kind||null}).select().single();
+      if(!row) return;
+      const pat={id:row.id,name:row.name,category:row.category,author:row.author,path:row.file_path||'',fileName:row.file_name||'',kind:row.file_kind||''};
+      this.setState(s=>({patterns:[pat,...s.patterns],patternDialog:false,patternEditId:null,patternOrigPath:''}));
+    }
+  };
   deletePattern=(id)=>async(e)=>{ e.stopPropagation(); const p=this.state.patterns.find(x=>x.id===id);
     if(p&&p.path) await supabase.storage.from('patterns').remove([p.path]);
     await supabase.from('patterns').delete().eq('id',id);
     this.setState(s=>({patterns:s.patterns.filter(x=>x.id!==id)})); };
   setLibFilter=(c)=>()=>this.setState({libFilter:c});
+  setLibAuthor=(a)=>()=>this.setState({libAuthor:a});
+
+  // ---- taxonomies (catégories & auteurs, stockées dans user_metadata) ----
+  toggleManageTax=()=>this.setState(s=>({manageTax:!s.manageTax}));
+  setNewCategory=(e)=>this.setState({newCategory:e.target.value});
+  setNewAuthor=(e)=>this.setState({newAuthor:e.target.value});
+  addCategory=async()=>{ const c=this.state.newCategory.trim(); if(!c||this.state.categories.includes(c)){ this.setState({newCategory:''}); return; }
+    this.setState({newCategory:''}); await this.saveMeta({categories:[...this.state.categories,c]}); };
+  deleteCategory=(c)=>async()=>{ await this.saveMeta({categories:this.state.categories.filter(x=>x!==c)});
+    this.setState(s=>({libFilter:s.libFilter===c?'Tous':s.libFilter})); };
+  addAuthor=async()=>{ const a=this.state.newAuthor.trim(); if(!a||this.state.authors.includes(a)){ this.setState({newAuthor:''}); return; }
+    this.setState({newAuthor:''}); await this.saveMeta({authors:[...this.state.authors,a]}); };
+  deleteAuthor=(a)=>async()=>{ await this.saveMeta({authors:this.state.authors.filter(x=>x!==a)});
+    this.setState(s=>({libAuthor:s.libAuthor===a?'Tous':s.libAuthor})); };
+
+  // ---- profil : nom personnalisé ----
+  startEditName=()=>this.setState(s=>({editingName:true,nameDraft:s.displayName||''}));
+  cancelEditName=()=>this.setState({editingName:false});
+  setNameDraft=(e)=>this.setState({nameDraft:e.target.value});
+  saveName=async()=>{ const n=this.state.nameDraft.trim(); await this.saveMeta({display_name:n}); this.setState({editingName:false}); };
 
   // ---- projects ----
-  newProject=()=>this.setState({zone:'projects',editingProject:'new',
-    projectDraft:{id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]},
-    allocPick:{colorwayId:'',grams:''}});
-  editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); this.setState({zone:'projects',editingProject:id,projectDraft:JSON.parse(JSON.stringify(p)),allocPick:{colorwayId:'',grams:''}}); };
+  newProject=()=>{ const draft={id:null,name:'',patternId:'',size:'',gauge:'',needle:'',startDate:this.today(),endDate:null,notes:'',allocations:[],photos:[]};
+    this.setState({zone:'projects',editingProject:'new',projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''}}); };
+  editProject=(id)=>()=>{ const p=this.state.projects.find(x=>x.id===id); const draft=this.dedupeAllocs(JSON.parse(JSON.stringify(p)));
+    this.setState({zone:'projects',editingProject:id,projectDraft:draft,projectDraftInitial:JSON.stringify(draft),allocPick:{colorwayId:'',grams:''}});
+    this.ensurePatternUrl(draft.patternId); };
   cancelEdit=()=>{ const d=this.state.projectDraft;
     if(d && !d.id && d.photos.length) d.photos.forEach(ph=>supabase.storage.from('photos').remove([ph.path]));
-    this.setState({editingProject:null,projectDraft:null}); };
+    this.setState({editingProject:null,projectDraft:null,projectDraftInitial:null}); };
+  ensurePatternUrl=async(patternId)=>{ if(!patternId) return; const p=this.state.patterns.find(x=>x.id===patternId);
+    if(!p||!p.path||this.state.signedUrls[p.path]) return;
+    const url=await this.getSignedUrl('patterns',p.path);
+    if(url) this.setState(s=>({signedUrls:{...s.signedUrls,[p.path]:url}})); };
   setPD=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,[f]:v}})); };
   saveProject=async()=>{ const d=this.state.projectDraft; if(!d.name.trim()) return;
     const uid=this.state.session.user.id;
@@ -246,9 +331,30 @@ class App extends Component {
       await supabase.from('projects').delete().eq('id',id);
     }
     this.setState(s=>({projects:s.projects.filter(p=>p.id!==id),editingProject:null,projectDraft:null})); };
+  setProjectPattern=(e)=>{ const v=e.target.value; this.setState(s=>({projectDraft:{...s.projectDraft,patternId:v}})); this.ensurePatternUrl(v); };
+  dedupeAllocs(draft){
+    const seen={}; const merged=[]; const toDelete=[];
+    (draft.allocations||[]).forEach(a=>{
+      if(seen[a.colorwayId]!==undefined){ const idx=seen[a.colorwayId]; merged[idx].grams=(Number(merged[idx].grams)||0)+(Number(a.grams)||0); if(a.rowId) toDelete.push(a.rowId); }
+      else { seen[a.colorwayId]=merged.length; merged.push({...a}); }
+    });
+    if(toDelete.length){
+      supabase.from('project_allocations').delete().in('id',toDelete);
+      merged.forEach(m=>{ if(m.rowId) supabase.from('project_allocations').update({grams:m.grams}).eq('id',m.rowId); });
+    }
+    return {...draft,allocations:merged};
+  }
   setAllocPick=(f)=>(e)=>{ const v=e.target.value; this.setState(s=>({allocPick:{...s.allocPick,[f]:v}})); };
   addAlloc=async()=>{ const a=this.state.allocPick; if(!a.colorwayId) return; const grams=Number(a.grams)||0;
-    const d=this.state.projectDraft; let rowId=null;
+    const d=this.state.projectDraft;
+    // Fusion : si le coloris est déjà associé au projet, on cumule les grammes.
+    const idx=d.allocations.findIndex(x=>x.colorwayId===a.colorwayId);
+    if(idx>=0){ const ex=d.allocations[idx]; const newGrams=(Number(ex.grams)||0)+grams;
+      if(d.id && ex.rowId) await supabase.from('project_allocations').update({grams:newGrams}).eq('id',ex.rowId);
+      this.setState(s=>({projectDraft:{...s.projectDraft,allocations:s.projectDraft.allocations.map((x,i)=>i===idx?{...x,grams:newGrams}:x)},allocPick:{colorwayId:'',grams:''}}));
+      return;
+    }
+    let rowId=null;
     if(d.id){ const uid=this.state.session.user.id;
       const {data}=await supabase.from('project_allocations').insert({user_id:uid,project_id:d.id,colorway_id:a.colorwayId,grams}).select().single();
       rowId=data?data.id:null;
@@ -276,7 +382,7 @@ class App extends Component {
     if(ph.rowId) await supabase.from('project_photos').delete().eq('id',ph.rowId);
     this.setState(s=>({projectDraft:{...s.projectDraft,photos:s.projectDraft.photos.filter((x,idx)=>idx!==i)}})); };
 
-  closeModals=()=>this.setState({patternDialog:false});
+  closeModals=()=>this.setState({patternDialog:false,patternEditId:null,patternOrigPath:''});
 
   thumb(hex){ return `height:120px;background:linear-gradient(135deg,${hex} 0%,color-mix(in srgb,${hex} 60%,#000) 130%)`; }
 
@@ -308,19 +414,29 @@ class App extends Component {
       return {id:y.id,brand:y.brand,name:y.name,blend:y.blend,mps:y.mps,gps:y.gps,colorways,
         totalAvail,totalSkeins,cwCount:y.colorways.length,
         expanded:st.expandedYarn===y.id,toggle:this.toggleYarn(y.id),del:this.deleteYarn(y.id),
+        editing:st.editingYarn===y.id,startEdit:this.startEditYarn(y.id),saveEdit:this.saveEditYarn(y.id),
         addCwOpen:st.cwFor===y.id,startCw:this.startCw(y.id),addCw:this.addCw(y.id),
         caret:`transition:transform .2s;transform:rotate(${st.expandedYarn===y.id?90:0}deg)`};
     });
 
-    const cats=['Tous',...Array.from(new Set(st.patterns.map(p=>p.category)))];
-    const catChips=cats.map(c=>({label:c,active:st.libFilter===c,pick:this.setLibFilter(c),
-      style:`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${st.libFilter===c?'var(--color-accent)':'var(--color-divider)'};background:${st.libFilter===c?'var(--color-accent)':'transparent'};color:${st.libFilter===c?'var(--color-bg)':'var(--color-text)'}`}));
+    const usedCats=st.patterns.map(p=>p.category).filter(Boolean);
+    const allCats=Array.from(new Set([...st.categories,...usedCats]));
+    const chipStyle=(active)=>`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${active?'var(--color-accent)':'var(--color-divider)'};background:${active?'var(--color-accent)':'transparent'};color:${active?'var(--color-bg)':'var(--color-text)'}`;
+    const catChips=['Tous',...allCats].map(c=>({label:c,active:st.libFilter===c,pick:this.setLibFilter(c),style:chipStyle(st.libFilter===c)}));
+    const usedAuthors=st.patterns.map(p=>p.author).filter(Boolean);
+    const allAuthors=Array.from(new Set([...st.authors,...usedAuthors]));
+    const authorChips=['Tous',...allAuthors].map(a=>({label:a,active:st.libAuthor===a,pick:this.setLibAuthor(a),
+      style:`cursor:pointer;padding:7px 15px;border-radius:999px;font-size:13px;border:1px solid ${st.libAuthor===a?'var(--color-accent-2)':'var(--color-divider)'};background:${st.libAuthor===a?'var(--color-accent-2)':'transparent'};color:${st.libAuthor===a?'var(--color-bg)':'var(--color-text)'}`}));
+    const hasAuthorChips=allAuthors.length>0;
+    // Panneau « gérer les catégories / auteurs »
+    const manageCats=allCats.map(c=>({label:c,del:this.deleteCategory(c)}));
+    const manageAuthors=allAuthors.map(a=>({label:a,del:this.deleteAuthor(a)}));
     const usedIn=(id)=>st.projects.filter(p=>p.patternId===id).length;
-    const patterns=st.patterns.filter(p=>st.libFilter==='Tous'||p.category===st.libFilter).map(p=>{
+    const patterns=st.patterns.filter(p=>(st.libFilter==='Tous'||p.category===st.libFilter)&&(st.libAuthor==='Tous'||p.author===st.libAuthor)).map(p=>{
       const url=p.kind==='img'&&p.path? st.signedUrls[p.path]:'';
-      return {id:p.id,name:p.name,category:p.category,author:p.author,isPdf:p.kind==='pdf',
+      return {id:p.id,name:p.name,category:p.category,author:p.author||'Sans auteur',isPdf:p.kind==='pdf',
         coverStyle:`height:150px;display:flex;align-items:center;justify-content:center;${url?`background-image:url(${url});background-size:cover;background-position:center`:`background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))`}`,
-        usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id)};
+        usedLabel:usedIn(p.id)>0?`${usedIn(p.id)} projet(s)`:'Non utilisé',del:this.deletePattern(p.id),edit:this.startEditPattern(p.id)};
     });
 
     let detail=null;
@@ -332,11 +448,16 @@ class App extends Component {
       const options=[]; st.stash.forEach(y=>y.colorways.forEach(cw=>{ const avail=cw.grams-this.allocatedTo(cw.id); options.push({id:cw.id,label:`${y.name} · ${cw.color} — ${avail} g dispo`}); }));
       const photos=d.photos.map((ph,i)=>{ const url=st.signedUrls[ph.path]||'';
         return {remove:this.removePhoto(i), imgEl: url? h('img',{src:url,style:{width:'100%',height:'100%',objectFit:'cover'}}) : h('div',{style:{width:'100%',height:'100%',background:'var(--color-neutral-200)'}})}; });
+      const selP=st.patterns.find(x=>x.id===d.patternId);
+      const patUrl=selP&&selP.path?(st.signedUrls[selP.path]||''):'';
+      const patIsImg=!!(selP&&selP.kind==='img');
+      const patIsPdf=!!(selP&&selP.kind==='pdf');
+      const patImgEl=(patIsImg&&patUrl)?h('img',{src:patUrl,style:{width:'100%',display:'block',borderRadius:'14px'}}):null;
       detail={id:d.id,isNew:!d.id,name:d.name,patternId:d.patternId,size:d.size,gauge:d.gauge,needle:d.needle,
         startDate:d.startDate,endDate:d.endDate,done:!!d.endDate,notes:d.notes,photos,
         allocRows,options,pickId:st.allocPick.colorwayId,pickGrams:st.allocPick.grams,
-        patternOptions:st.patterns,hasPatternImg:this.patHasImg(d.patternId),patternMeta:this.patMeta(d.patternId),
-        patternImgEl:this.patHasImg(d.patternId)?h('div',{className:'washed',style:{borderRadius:'16px',overflow:'hidden'}},h('img',{src:this.patSrc(d.patternId),style:{width:'100%',display:'block'}})):null,
+        patternOptions:st.patterns,hasPattern:!!selP,patternName:selP?selP.name:'',patternMeta:this.patMeta(d.patternId),
+        patIsImg,patIsPdf,patUrl,patImgEl,
         totalGrams:projGrams(d)};
     }
 
@@ -348,7 +469,7 @@ class App extends Component {
 
     const email=(st.session&&st.session.user&&st.session.user.email)||'';
     const localPart=email.split('@')[0]||'Toi';
-    const userName=localPart.charAt(0).toUpperCase()+localPart.slice(1);
+    const userName=(st.displayName&&st.displayName.trim())||(localPart.charAt(0).toUpperCase()+localPart.slice(1));
     const createdAt=st.session&&st.session.user&&st.session.user.created_at;
     const memberSince=createdAt? ('Membre depuis '+new Date(createdAt).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})):'';
 
@@ -367,23 +488,31 @@ class App extends Component {
       setYBlend:this.setYarnDraft('blend'),setYColor:this.setYarnDraft('color'),setYHex:this.setYarnDraft('hex'),setYDye:this.setYarnDraft('dyeLot'),setYGrams:this.setYarnDraft('grams'),
       cwDraft:st.cwDraft,setCwColor:this.setCwDraft('color'),setCwHex:this.setCwDraft('hex'),setCwDye:this.setCwDraft('dyeLot'),setCwGramsD:this.setCwDraft('grams'),
       stashEmpty:st.stash.length===0,
-      catChips,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
-      patternDialog:st.patternDialog,pd:st.patternDraft,closePattern:this.closePattern,addPattern:this.addPattern,onPatternFile:this.onPatternFile,
+      yed:st.yarnEditDraft,cancelEditYarn:this.cancelEditYarn,
+      setYEBrand:this.setYarnEditDraft('brand'),setYEName:this.setYarnEditDraft('name'),setYEMps:this.setYarnEditDraft('mps'),setYEGps:this.setYarnEditDraft('gps'),setYEBlend:this.setYarnEditDraft('blend'),
+      catChips,authorChips,hasAuthorChips,patterns,openPattern:this.openPattern,patternsEmpty:patterns.length===0,
+      manageTax:st.manageTax,toggleManageTax:this.toggleManageTax,manageCats,manageAuthors,
+      newCategory:st.newCategory,setNewCategory:this.setNewCategory,addCategory:this.addCategory,
+      newAuthor:st.newAuthor,setNewAuthor:this.setNewAuthor,addAuthor:this.addAuthor,
+      patternDialog:st.patternDialog,patternEdit:!!st.patternEditId,pd:st.patternDraft,closePattern:this.closePattern,savePattern:this.savePattern,onPatternFile:this.onPatternFile,
+      catOptions:allCats,authorOptions:allAuthors,
       setPName:this.setPatternDraft('name'),setPCat:this.setPatternDraft('category'),setPAuthor:this.setPatternDraft('author'),
       pdHasFile:!!(st.patternDraft.fileName),pdFileName:st.patternDraft.fileName||'',
       pdCover:(st.patternDraft.kind==='img'&&st.patternDraft.path&&st.signedUrls[st.patternDraft.path])?`background-image:url(${st.signedUrls[st.patternDraft.path]});background-size:cover;background-position:center`:'background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200))',
       projectCards,projectsEmpty:st.projects.length===0,detail,
-      setName:this.setPD('name'),setPattern:this.setPD('patternId'),setSize:this.setPD('size'),setGauge:this.setPD('gauge'),setNeedle:this.setPD('needle'),
+      setName:this.setPD('name'),setPattern:this.setProjectPattern,setSize:this.setPD('size'),setGauge:this.setPD('gauge'),setNeedle:this.setPD('needle'),
       setStart:this.setPD('startDate'),setNotes:this.setPD('notes'),
       cancelEdit:this.cancelEdit,saveProject:this.saveProject,finishProject:this.finishProject,reopenProject:this.reopenProject,deleteProject:this.deleteProject,
       setPickId:this.setAllocPick('colorwayId'),setPickGrams:this.setAllocPick('grams'),addAlloc:this.addAlloc,
       onProjectPhoto:this.onProjectPhoto,
+      pendingNav:st.pendingNav,confirmNavSave:this.confirmNavSave,confirmNavDiscard:this.confirmNavDiscard,cancelNav:this.cancelNav,
       profPatterns:st.patterns.length,profYarns:st.stash.length,
       profColorways:st.stash.reduce((s,y)=>s+y.colorways.length,0),
       profOwned:this.fmt(st.stash.reduce((s,y)=>s+y.colorways.reduce((t,c)=>t+c.grams,0),0)),
       profActive:active.length+' en cours',profDone:completed+' terminés',
       profFibers:this.fiberBreakdown(),
       modalOpen:st.patternDialog,closeModals:this.closeModals,
+      editingName:st.editingName,nameDraft:st.nameDraft,startEditName:this.startEditName,cancelEditName:this.cancelEditName,setNameDraft:this.setNameDraft,saveName:this.saveName,
       userName,userEmail:email,avatarLetter:userName.charAt(0).toUpperCase()||'?',memberSince,signOut:this.signOut,
     };
   }
@@ -542,14 +671,31 @@ class App extends Component {
           <div style="display:flex;flex-direction:column;gap:10px">
             ${v.stashRows.map(y=>html`
               <div style="border-radius:22px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm)">
-                <div onClick=${y.toggle} class="stash-row" style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 60px;gap:12px;align-items:center;padding:14px 18px;cursor:pointer">
+                <div onClick=${y.toggle} class="stash-row" style="display:grid;grid-template-columns:44px 1.6fr 1fr .8fr .7fr 96px;gap:12px;align-items:center;padding:14px 18px;cursor:pointer">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" style=${y.caret}><path d="M9 6l6 6-6 6"/></svg>
                   <div class="stash-name"><div style="font-family:var(--font-heading);font-size:17px;line-height:1.1">${y.name}</div><div style="font-size:12px" class="text-muted">${y.brand}</div></div>
                   <div class="text-muted mob-hide" style="font-size:12.5px">${y.blend}</div>
                   <div class="mob-hide" style="font-size:13px">${y.cwCount} coloris</div>
                   <div><span style="font-family:var(--font-heading);font-size:19px">${y.totalAvail}</span> <span style="font-size:12px" class="text-muted">g · ${y.totalSkeins} pelotes</span></div>
-                  <button class="btn btn-icon btn-ghost" onClick=${y.del} title="Supprimer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                  <div style="display:flex;gap:2px;justify-content:flex-end">
+                    <button class="btn btn-icon btn-ghost" onClick=${(e)=>{e.stopPropagation();y.startEdit(e);}} title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                    <button class="btn btn-icon btn-ghost" onClick=${y.del} title="Supprimer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                  </div>
                 </div>
+                ${y.editing && html`
+                  <div style="padding:4px 18px 18px;animation:pop .2s ease both">
+                    <div style="border-top:1px solid var(--color-divider);padding-top:14px">
+                      <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:12px">Modifier la laine</div>
+                      <div class="form-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+                        <div class="field"><label>Marque</label><input class="input" value=${v.yed.brand} onInput=${v.setYEBrand}/></div>
+                        <div class="field"><label>Nom</label><input class="input" value=${v.yed.name} onInput=${v.setYEName}/></div>
+                        <div class="field"><label>Mètres / pelote</label><input class="input" type="number" value=${v.yed.mps} onInput=${v.setYEMps}/></div>
+                        <div class="field"><label>Grammes / pelote</label><input class="input" type="number" value=${v.yed.gps} onInput=${v.setYEGps}/></div>
+                        <div class="field" style="grid-column:1/3"><label>Composition (blend)</label><input class="input" value=${v.yed.blend} onInput=${v.setYEBlend}/></div>
+                        <div style="display:flex;align-items:flex-end;gap:8px;grid-column:3/5;justify-content:flex-end"><button class="btn btn-secondary" onClick=${v.cancelEditYarn}>Annuler</button><button class="btn btn-primary" onClick=${y.saveEdit}>Enregistrer</button></div>
+                      </div>
+                    </div>
+                  </div>`}
                 ${y.expanded && html`
                   <div style="padding:4px 18px 18px;animation:pop .2s ease both">
                     <div style="border-top:1px solid var(--color-divider);padding-top:14px;display:flex;flex-direction:column;gap:10px">
@@ -584,30 +730,64 @@ class App extends Component {
               <h1 style="margin:0;font-size:36px">Bibliothèque</h1>
               <p style="margin:6px 0 0" class="text-muted">Tes patrons, classés par type et par auteur. Associe-les à tes projets.</p>
             </div>
-            <button class="btn btn-primary" onClick=${v.openPattern}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un patron</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary" onClick=${v.toggleManageTax} title="Gérer les catégories et auteurs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Gérer</button>
+              <button class="btn btn-primary" onClick=${v.openPattern}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter un patron</button>
+            </div>
           </div>
 
-          <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px">
+          ${v.manageTax && html`
+            <div style="border-radius:22px;background:var(--color-accent-2-100);padding:18px 20px;margin-bottom:20px;animation:pop .2s ease both">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px" class="form-grid">
+                <div>
+                  <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Catégories</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                    ${v.manageCats.map(c=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${c.label}<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${c.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
+                    ${v.manageCats.length===0 && html`<span class="text-muted" style="font-size:12px">Aucune catégorie</span>`}
+                  </div>
+                  <div style="display:flex;gap:8px"><input class="input" value=${v.newCategory} onInput=${v.setNewCategory} placeholder="Nouvelle catégorie" onKeyDown=${(e)=>{if(e.key==='Enter')v.addCategory();}}/><button class="btn btn-primary" onClick=${v.addCategory}>Ajouter</button></div>
+                </div>
+                <div>
+                  <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:10px">Auteurs / créateurs</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                    ${v.manageAuthors.map(a=>html`<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 12px;border-radius:999px;background:var(--color-surface);font-size:13px">${a.label}<button class="btn btn-icon btn-ghost" style="width:22px;height:22px" onClick=${a.del} title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>`)}
+                    ${v.manageAuthors.length===0 && html`<span class="text-muted" style="font-size:12px">Aucun auteur</span>`}
+                  </div>
+                  <div style="display:flex;gap:8px"><input class="input" value=${v.newAuthor} onInput=${v.setNewAuthor} placeholder="Nouvel auteur" onKeyDown=${(e)=>{if(e.key==='Enter')v.addAuthor();}}/><button class="btn btn-primary" onClick=${v.addAuthor}>Ajouter</button></div>
+                </div>
+              </div>
+            </div>`}
+
+          <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Catégorie</div>
+          <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:16px">
             ${v.catChips.map(c=>html`<button onClick=${c.pick} style=${c.style}>${c.label}</button>`)}
           </div>
+          ${v.hasAuthorChips && html`
+            <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent-2-700);margin-bottom:8px">Auteur</div>
+            <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px">
+              ${v.authorChips.map(a=>html`<button onClick=${a.pick} style=${a.style}>${a.label}</button>`)}
+            </div>`}
 
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px">
             ${v.patterns.map(p=>html`
               <div style="border-radius:22px;background:var(--color-surface);overflow:hidden;box-shadow:var(--shadow-sm);animation:pop .25s ease both">
-                <div class="washed" style=${p.coverStyle}>
+                <div class="washed" onClick=${p.edit} style=${'cursor:pointer;'+p.coverStyle}>
                   ${p.isPdf && html`<div style="display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--color-accent-700)"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span style="font-size:11px;font-weight:600">PDF</span></div>`}
                 </div>
                 <div style="padding:15px 17px 17px">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:4px">
                     <div><span class="tag tag-accent">${p.category}</span></div>
-                    <button class="btn btn-icon btn-ghost" onClick=${p.del} style="margin:-6px -6px 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                    <div style="display:flex;gap:2px">
+                      <button class="btn btn-icon btn-ghost" onClick=${p.edit} title="Modifier" style="margin:-6px 0 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                      <button class="btn btn-icon btn-ghost" onClick=${p.del} title="Supprimer" style="margin:-6px -6px 0 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+                    </div>
                   </div>
                   <div style="font-family:var(--font-heading);font-size:18px;line-height:1.15;margin-top:10px">${p.name}</div>
                   <div style="font-size:13px;margin-top:3px" class="text-muted">${p.author}</div>
                   <div style="font-size:11px;margin-top:12px;color:var(--color-accent-2-700)">${p.usedLabel}</div>
                 </div>
               </div>`)}
-            ${v.patternsEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucun patron dans cette catégorie.</div>`}
+            ${v.patternsEmpty && html`<div style="grid-column:1/-1;padding:40px;text-align:center;border:2px dashed var(--color-divider);border-radius:22px" class="text-muted">Aucun patron dans cette sélection.</div>`}
           </div>
         </section>
 
@@ -636,78 +816,93 @@ class App extends Component {
 
         <section style=${v.detailShow}>
           ${v.detail && html`
-            <div>
+            <div class="detail-wrap">
               <button class="btn btn-ghost" onClick=${v.cancelEdit} style="margin-bottom:14px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Tous les projets</button>
-              <div class="detail-grid" style="display:grid;grid-template-columns:1.35fr 1fr;gap:28px;align-items:start">
 
-                <div style="display:flex;flex-direction:column;gap:20px">
-                  <input class="input" value=${v.detail.name} onInput=${v.setName} placeholder="Nom du projet" style="font-family:var(--font-heading);font-size:26px;height:auto;padding:12px 18px;border-radius:18px"/>
+              <input class="input" value=${v.detail.name} onInput=${v.setName} placeholder="Nom du projet" style="font-family:var(--font-heading);font-size:26px;height:auto;padding:12px 18px;border-radius:18px;margin-bottom:20px"/>
 
+              <div class="detail-sections" style="display:flex;flex-direction:column;gap:20px">
+
+                <!-- Section 1 · Infos -->
+                <div style="border-radius:22px;background:var(--color-surface);padding:20px">
+                  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Informations</div>
                   <div class="grid-3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
                     <div class="field"><label>Taille</label><input class="input" value=${v.detail.size} onInput=${v.setSize} placeholder="M"/></div>
                     <div class="field"><label>Gauge (m. / 10 cm)</label><input class="input" type="number" value=${v.detail.gauge} onInput=${v.setGauge} placeholder="22"/></div>
                     <div class="field"><label>Aiguilles (mm)</label><input class="input" type="number" step="0.5" value=${v.detail.needle} onInput=${v.setNeedle} placeholder="4"/></div>
-                    <div class="field"><label>Patron</label>
-                      <select class="input" value=${v.detail.patternId} onChange=${v.setPattern}>
-                        <option value="">Aucun patron</option>
-                        ${v.detail.patternOptions.map(po=>html`<option value=${po.id}>${po.name}</option>`)}
-                      </select>
-                    </div>
                     <div class="field"><label>Date de début</label><input class="input" type="date" value=${v.detail.startDate} onInput=${v.setStart}/></div>
-                    <div class="field"><label>Statut</label><input class="input" value=${v.detail.endDate} disabled placeholder="En cours" style="opacity:.7"/></div>
+                    <div class="field" style="grid-column:span 2"><label>Statut</label><input class="input" value=${v.detail.done?'Terminé':'En cours'} disabled style="opacity:.7"/></div>
                   </div>
+                  <div class="field" style="margin-top:14px"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
+                </div>
 
-                  <div>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><h4 style="margin:0;font-size:18px">Laine associée</h4><span style="font-size:12px" class="text-muted">${v.detail.totalGrams} g au total</span></div>
-                    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
-                      ${v.detail.allocRows.map(a=>html`
-                        <div class="alloc-row" style="display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-radius:16px;background:var(--color-surface)">
-                          <span style=${a.dot}></span>
-                          <div><div style="font-weight:600;font-size:14px">${a.label}</div><div style="font-size:11px" class="text-muted">Dispo restant : ${a.avail} g</div></div>
-                          <input class="input" type="number" value=${a.grams} onInput=${a.setGrams} style="width:92px;text-align:right"/>
-                          <span style="font-size:12px" class="text-muted">g utilisés</span>
-                          <button class="btn btn-icon btn-ghost" onClick=${a.remove}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-                        </div>`)}
-                    </div>
-                    <div class="alloc-add" style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding:12px 14px;border-radius:16px;border:1px dashed var(--color-accent-2)">
-                      <div class="field" style="margin:0"><label>Depuis le stash</label>
-                        <select class="input" value=${v.detail.pickId} onChange=${v.setPickId}>
-                          <option value="">Choisir une laine…</option>
-                          ${v.detail.options.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
+                <!-- Section 2 · Patron -->
+                <div style="border-radius:22px;background:var(--color-surface);padding:20px">
+                  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:14px">Patron</div>
+                  <div class="pattern-sec" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
+                    <div>
+                      <div class="field"><label>Choix du patron</label>
+                        <select class="input" value=${v.detail.patternId} onChange=${v.setPattern}>
+                          <option value="">Aucun patron</option>
+                          ${v.detail.patternOptions.map(po=>html`<option value=${po.id}>${po.name}</option>`)}
                         </select>
                       </div>
-                      <div class="field" style="margin:0;width:110px"><label>Grammes</label><input class="input" type="number" value=${v.detail.pickGrams} onInput=${v.setPickGrams} placeholder="200"/></div>
-                      <button class="btn btn-secondary" onClick=${v.addAlloc}>Associer</button>
+                      ${v.detail.hasPattern && html`<div style="font-size:13px;margin-top:12px" class="text-muted">${v.detail.patternMeta}</div>`}
                     </div>
-                    <p style="font-size:11.5px;margin:8px 2px 0" class="text-muted">Les grammes utilisés sont déduits du stash. Baisse la quantité en fin de projet pour rendre le surplus.</p>
-                  </div>
-
-                  <div class="field"><label>Notes</label><textarea class="input" value=${v.detail.notes} onInput=${v.setNotes} placeholder="Modifications, rangs, remarques…" style="min-height:100px"></textarea></div>
-                </div>
-
-                <div class="detail-side" style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
-                  <div style="border-radius:22px;background:var(--color-surface);padding:18px">
-                    <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:12px">Aperçu du patron</div>
-                    ${v.detail.hasPatternImg && v.detail.patternImgEl}
-                    ${!v.detail.hasPatternImg && html`<div style="height:150px;border-radius:16px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;align-items:center;justify-content:center;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg></div>`}
-                    <div style="font-size:13px;margin-top:10px" class="text-muted">${v.detail.patternMeta}</div>
-                  </div>
-
-                  <div style="border-radius:22px;background:var(--color-surface);padding:18px">
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div><label class="btn btn-ghost" style="cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter<input type="file" accept="image/*" onChange=${v.onProjectPhoto}/></label></div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-                      ${v.detail.photos.map(ph=>html`
-                        <div style="position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1">${ph.imgEl}<button onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button></div>`)}
+                    <div>
+                      <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-accent-2-700);margin-bottom:8px">Aperçu</div>
+                      ${v.detail.patIsImg && v.detail.patUrl && html`<div class="washed" style="border-radius:14px;overflow:hidden">${v.detail.patImgEl}</div>`}
+                      ${v.detail.patIsPdf && html`<a href=${v.detail.patUrl} target="_blank" rel="noopener" style="text-decoration:none"><div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span style="font-size:12px;font-weight:600">Ouvrir le PDF</span></div></a>`}
+                      ${(!v.detail.patIsImg||!v.detail.patUrl) && !v.detail.patIsPdf && html`<div style="height:150px;border-radius:14px;background:linear-gradient(135deg,var(--color-accent-200),var(--color-accent-2-200));display:flex;align-items:center;justify-content:center;color:var(--color-accent-700)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 4v16"/></svg></div>`}
                     </div>
                   </div>
+                </div>
 
-                  <div style="display:flex;flex-direction:column;gap:10px">
-                    <button class="btn btn-primary btn-block" onClick=${v.saveProject} style="margin:0">Enregistrer</button>
-                    ${v.detail.done && html`<button class="btn btn-secondary btn-block" onClick=${v.reopenProject} style="margin:0">Rouvrir le projet</button>`}
-                    ${!v.detail.done && html`<button class="btn btn-secondary btn-block" onClick=${v.finishProject} style="margin:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg>J'ai fini le projet</button>`}
-                    <button class="btn btn-ghost" onClick=${v.deleteProject} style="justify-content:center">Supprimer</button>
+                <!-- Section 3 · Laines associées -->
+                <div style="border-radius:22px;background:var(--color-surface);padding:20px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Laines associées</div><span style="font-size:12px" class="text-muted">${v.detail.totalGrams} g au total</span></div>
+                  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+                    ${v.detail.allocRows.map(a=>html`
+                      <div class="alloc-row" style="display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-radius:16px;background:var(--color-bg)">
+                        <span style=${a.dot}></span>
+                        <div><div style="font-weight:600;font-size:14px">${a.label}</div><div style="font-size:11px" class="text-muted">Dispo restant : ${a.avail} g</div></div>
+                        <input class="input" type="number" value=${a.grams} onInput=${a.setGrams} style="width:92px;text-align:right"/>
+                        <span style="font-size:12px" class="text-muted">g utilisés</span>
+                        <button class="btn btn-icon btn-ghost" onClick=${a.remove}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                      </div>`)}
+                    ${v.detail.allocRows.length===0 && html`<div class="text-muted" style="font-size:13px;padding:4px 2px">Aucune laine associée pour l'instant.</div>`}
+                  </div>
+                  <div class="alloc-add" style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding:12px 14px;border-radius:16px;border:1px dashed var(--color-accent-2)">
+                    <div class="field" style="margin:0"><label>Depuis le stash</label>
+                      <select class="input" value=${v.detail.pickId} onChange=${v.setPickId}>
+                        <option value="">Choisir une laine…</option>
+                        ${v.detail.options.map(o=>html`<option value=${o.id}>${o.label}</option>`)}
+                      </select>
+                    </div>
+                    <div class="field" style="margin:0;width:110px"><label>Grammes</label><input class="input" type="number" value=${v.detail.pickGrams} onInput=${v.setPickGrams} placeholder="200"/></div>
+                    <button class="btn btn-secondary" onClick=${v.addAlloc}>Associer</button>
+                  </div>
+                  <p style="font-size:11.5px;margin:8px 2px 0" class="text-muted">Une même laine associée deux fois est fusionnée. Les grammes utilisés sont déduits du stash.</p>
+                </div>
+
+                <!-- Section 4 · Photos -->
+                <div style="border-radius:22px;background:var(--color-surface);padding:20px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent)">Photos</div><label class="btn btn-ghost" style="cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter<input type="file" accept="image/*" onChange=${v.onProjectPhoto}/></label></div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
+                    ${v.detail.photos.map(ph=>html`
+                      <div style="position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1">${ph.imgEl}<button onClick=${ph.remove} style="position:absolute;top:5px;right:5px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;cursor:pointer;font-size:12px">×</button></div>`)}
+                    ${v.detail.photos.length===0 && html`<div class="text-muted" style="font-size:13px;grid-column:1/-1;padding:4px 2px">Aucune photo.</div>`}
                   </div>
                 </div>
+
+              </div>
+
+              <!-- Barre d'action toujours visible -->
+              <div class="detail-actions" style="position:sticky;bottom:0;z-index:20;margin-top:16px;padding:14px 0 4px;background:linear-gradient(to top,var(--color-bg) 72%,transparent);display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn btn-primary" onClick=${v.saveProject} style="flex:1;min-width:140px">Enregistrer</button>
+                ${v.detail.done && html`<button class="btn btn-secondary" onClick=${v.reopenProject} style="flex:1;min-width:140px">Rouvrir le projet</button>`}
+                ${!v.detail.done && html`<button class="btn btn-secondary" onClick=${v.finishProject} style="flex:1;min-width:140px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg>J'ai fini le projet</button>`}
+                <button class="btn btn-ghost" onClick=${v.deleteProject}>Supprimer</button>
               </div>
             </div>`}
         </section>
@@ -717,7 +912,16 @@ class App extends Component {
           <div class="profil-grid" style="display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start">
             <div style="border-radius:26px;background:var(--color-surface);padding:26px;text-align:center;box-shadow:var(--shadow-sm)">
               <div style="width:96px;height:96px;border-radius:50%;margin:0 auto 16px;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:38px;color:var(--color-bg)">${v.avatarLetter}</div>
-              <div style="font-family:var(--font-heading);font-size:24px">${v.userName}</div>
+              ${!v.editingName && html`
+                <div style="display:flex;align-items:center;justify-content:center;gap:6px">
+                  <div style="font-family:var(--font-heading);font-size:24px">${v.userName}</div>
+                  <button class="btn btn-icon btn-ghost" style="width:26px;height:26px" onClick=${v.startEditName} title="Modifier le nom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+                </div>`}
+              ${v.editingName && html`
+                <div style="display:flex;flex-direction:column;gap:8px;margin:0 auto;max-width:220px">
+                  <input class="input" value=${v.nameDraft} onInput=${v.setNameDraft} placeholder="Ton prénom" style="text-align:center" onKeyDown=${(e)=>{if(e.key==='Enter')v.saveName();}}/>
+                  <div style="display:flex;gap:8px;justify-content:center"><button class="btn btn-secondary" onClick=${v.cancelEditName}>Annuler</button><button class="btn btn-primary" onClick=${v.saveName}>Enregistrer</button></div>
+                </div>`}
               <div style="font-size:12px;margin-top:2px" class="text-muted">${v.userEmail}</div>
               <div style="font-size:13px;margin-top:6px" class="text-muted">${v.memberSince}</div>
               <div style="display:flex;justify-content:center;gap:8px;margin-top:16px"><span class="tag tag-accent">${v.profActive}</span><span class="tag tag-accent-2">${v.profDone}</span></div>
@@ -753,7 +957,7 @@ class App extends Component {
     ${v.patternDialog && html`
       <div class="dialog-backdrop" style="z-index:50">
         <div class="dialog" style="width:min(460px,100%)">
-          <div class="dialog-title">Ajouter un patron</div>
+          <div class="dialog-title">${v.patternEdit?'Modifier le patron':'Ajouter un patron'}</div>
           <label style="display:block;cursor:pointer">
             <div class="washed" style=${'height:150px;border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;'+v.pdCover}>
               ${!v.pdHasFile && html`
@@ -767,12 +971,33 @@ class App extends Component {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="field"><label>Catégorie</label>
               <select class="input" value=${v.pd.category} onChange=${v.setPCat}>
-                <option>Pull</option><option>Gilet</option><option>Bonnet</option><option>Chaussettes</option><option>Écharpe</option><option>Châle</option><option>Accessoire</option><option>Autre</option>
+                <option value="">—</option>
+                ${v.catOptions.map(c=>html`<option value=${c}>${c}</option>`)}
               </select>
+              <div style="display:flex;gap:6px;margin-top:6px"><input class="input" value=${v.newCategory} onInput=${v.setNewCategory} placeholder="Nouvelle…" style="font-size:13px" onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.addCategory();}}}/><button class="btn btn-icon btn-secondary" onClick=${v.addCategory} title="Ajouter la catégorie"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
             </div>
-            <div class="field"><label>Auteur / créateur</label><input class="input" value=${v.pd.author} onInput=${v.setPAuthor} placeholder="My Favourite Things"/></div>
+            <div class="field"><label>Auteur / créateur</label>
+              <select class="input" value=${v.pd.author} onChange=${v.setPAuthor}>
+                <option value="">—</option>
+                ${v.authorOptions.map(a=>html`<option value=${a}>${a}</option>`)}
+              </select>
+              <div style="display:flex;gap:6px;margin-top:6px"><input class="input" value=${v.newAuthor} onInput=${v.setNewAuthor} placeholder="Nouvel auteur…" style="font-size:13px" onKeyDown=${(e)=>{if(e.key==='Enter'){e.preventDefault();v.addAuthor();}}}/><button class="btn btn-icon btn-secondary" onClick=${v.addAuthor} title="Ajouter l'auteur"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
+            </div>
           </div>
-          <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.addPattern}>Ajouter</button></div>
+          <div class="dialog-actions"><button class="btn btn-secondary" onClick=${v.closePattern}>Annuler</button><button class="btn btn-primary" onClick=${v.savePattern}>${v.patternEdit?'Enregistrer':'Ajouter'}</button></div>
+        </div>
+      </div>`}
+
+    ${v.pendingNav && html`
+      <div class="dialog-backdrop" style="z-index:60">
+        <div class="dialog" style="width:min(420px,100%)">
+          <div class="dialog-title">Modifications non enregistrées</div>
+          <div class="dialog-body">Tu as des changements non enregistrés sur ce projet. Veux-tu les enregistrer avant de quitter ?</div>
+          <div class="dialog-actions" style="flex-wrap:wrap">
+            <button class="btn btn-ghost" onClick=${v.cancelNav}>Annuler</button>
+            <button class="btn btn-secondary" onClick=${v.confirmNavDiscard}>Ne pas enregistrer</button>
+            <button class="btn btn-primary" onClick=${v.confirmNavSave}>Enregistrer</button>
+          </div>
         </div>
       </div>`}
     `;
