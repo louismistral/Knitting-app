@@ -313,6 +313,9 @@ body { min-height: 100%; overscroll-behavior: none; -webkit-tap-highlight-color:
   .stash-name { flex: 1; min-width: 0; }
   .cw-row     { display: flex !important; flex-wrap: wrap; align-items: center; gap: 10px !important; }
   .cw-row > div:nth-child(2) { flex: 1 1 120px; min-width: 0; }
+  /* Édition/suppression en haut à droite de la carte, grammes + réglage en dessous sur toute la largeur. */
+  .cw-actions { order: 1; margin-left: auto; }
+  .cw-grams   { order: 2; flex-basis: 100% !important; }
   .alloc-row  { display: flex !important; flex-wrap: wrap; align-items: center; gap: 10px !important; }
   .alloc-row > div { flex: 1 1 130px; min-width: 0; }
 

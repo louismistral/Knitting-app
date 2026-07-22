@@ -1180,17 +1180,19 @@ class App extends Component {
                             <div class="field" style="margin:0"><label>Grammes</label><input class="input" type="number" value=${v.cwEditDraft.grams} onInput=${v.setCwEGrams}/></div>
                             <div style="display:flex;gap:8px"><button class="btn btn-secondary" onClick=${v.cancelEditCw}>Annuler</button><button class="btn btn-primary" onClick=${cw.saveEdit}>Enregistrer</button></div>
                           </div>` : html`
-                          <div class="cw-row" style="display:grid;grid-template-columns:34px 1fr auto auto auto 70px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
+                          <div class="cw-row" style="display:grid;grid-template-columns:34px 1fr auto auto 70px;gap:14px;align-items:center;padding:8px 12px;border-radius:16px;background:var(--color-bg)">
                             <div style=${cw.swatch}></div>
                             <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
                             <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
-                            <div style="display:flex;align-items:center;gap:6px">
-                              <span style="font-family:var(--font-heading);font-size:15px">${cw.grams}</span><span style="font-size:12px" class="text-muted">g total</span>
-                              <button class="btn btn-icon btn-secondary" style="width:26px;height:26px;font-weight:700" onClick=${cw.toggleSign} title="Ajouter ou retirer des grammes">${cw.adjustSign}</button>
-                              <input class="input" type="number" min="0" placeholder="qté" value=${cw.adjustValue} onInput=${cw.setAdjustValue} onKeyDown=${cw.onAdjustKey} style="width:64px;text-align:right"/>
+                            <div class="cw-grams" style="display:flex;align-items:center;gap:8px">
+                              <span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted">g dispo</span>
+                              <div style="position:relative">
+                                <button class="btn btn-icon btn-secondary" style="position:absolute;left:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;font-weight:700;border-radius:50%" onClick=${cw.toggleSign} title="Ajouter ou retirer des grammes">${cw.adjustSign}</button>
+                                <input class="input" type="number" min="0" placeholder="qté" value=${cw.adjustValue} onInput=${cw.setAdjustValue} onKeyDown=${cw.onAdjustKey} style="width:84px;padding-left:30px;text-align:right"/>
+                              </div>
+                              <button class="btn btn-icon btn-primary" style="width:32px;height:32px" onClick=${cw.applyAdjust} title="Valider la saisie"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
                             </div>
-                            <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
-                            <div style="display:flex;gap:2px;justify-content:flex-end">
+                            <div class="cw-actions" style="display:flex;gap:2px;justify-content:flex-end">
                               <button class="btn btn-icon btn-ghost" onClick=${cw.startEdit} title="Modifier"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
                               <button class="btn btn-icon btn-ghost" onClick=${cw.del} title="Supprimer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
                             </div>
