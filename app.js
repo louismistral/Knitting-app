@@ -43,6 +43,8 @@ class App extends Component {
       filters:{}, filterOpen:{},
       // ---- glisser-déposer des photos de projet (Phase 5c) ----
       dragPhoto:null,         // {idx,key,w,h,grabX,grabY,x,y,url}
+      // ---- ajustement des grammes dispo par addition/soustraction ----
+      gramsAdjust:{},         // {[cwId]: {sign:'+'|'-', value}}
     };
     this._loadingData=false;
     this._flipFirst=null;   // rects « First » pour l'animation FLIP des vignettes
@@ -347,8 +349,22 @@ class App extends Component {
       onConfirm:()=>this._deleteYarn(id)}); };
   _deleteYarn=async(id)=>{ await supabase.from('yarns').delete().eq('id',id);
     this.setState(s=>({stash:s.stash.filter(y=>y.id!==id)})); };
-  setCwGrams=(yid,cid)=>async(e)=>{ const v=Number(e.target.value)||0; await supabase.from('colorways').update({grams:v}).eq('id',cid);
-    this.setState(s=>({stash:s.stash.map(y=>y.id!==yid?y:{...y,colorways:y.colorways.map(c=>c.id!==cid?c:{...c,grams:v})})})); };
+  // Les grammes dispo ne se modifient plus en écrasant la valeur : uniquement
+  // par addition ou soustraction d'une quantité, via le toggle +/- à côté.
+  getGramsAdjust(cid){ return this.state.gramsAdjust[cid]||{sign:'+',value:''}; }
+  toggleGramsSign=(cid)=>()=>{ const cur=this.getGramsAdjust(cid);
+    this.setState(s=>({gramsAdjust:{...s.gramsAdjust,[cid]:{...cur,sign:cur.sign==='+'?'-':'+'}}})); };
+  setGramsAdjustValue=(cid)=>(e)=>{ const v=e.target.value; const cur=this.getGramsAdjust(cid);
+    this.setState(s=>({gramsAdjust:{...s.gramsAdjust,[cid]:{...cur,value:v}}})); };
+  applyGramsAdjust=(yid,cid)=>async()=>{
+    const adj=this.getGramsAdjust(cid); const n=Number(adj.value);
+    if(!adj.value||!n||n<=0) return;
+    const y=this.state.stash.find(x=>x.id===yid); const cw=y&&y.colorways.find(c=>c.id===cid); if(!cw) return;
+    const newGrams=Math.max(0,cw.grams+(adj.sign==='-'?-n:n));
+    await supabase.from('colorways').update({grams:newGrams}).eq('id',cid);
+    this.setState(s=>({stash:s.stash.map(yy=>yy.id!==yid?yy:{...yy,colorways:yy.colorways.map(c=>c.id!==cid?c:{...c,grams:newGrams})}),
+      gramsAdjust:{...s.gramsAdjust,[cid]:{sign:adj.sign,value:''}}})); };
+  onGramsAdjustKey=(yid,cid)=>(e)=>{ if(e.key==='Enter'){ e.preventDefault(); this.applyGramsAdjust(yid,cid)(); } };
   startCw=(yid)=>()=>this.setState({cwFor:yid,cwDraft:{color:'',hex:'#c67139',dyeLot:'',grams:'',photo:''}});
   cancelCw=()=>{ const p=this.state.cwDraft.photo; if(p) supabase.storage.from('photos').remove([p]);
     this.setState({cwFor:null}); };
@@ -774,11 +790,15 @@ class App extends Component {
     ).map(y=>{
       const colorways=y.colorways.map(cw=>{ const alloc=this.allocatedTo(cw.id); const avail=cw.grams-alloc;
         const photoUrl=cw.photo?st.signedUrls[cw.photo]:'';
+        const adj=this.getGramsAdjust(cw.id);
         return {id:cw.id,color:cw.color,hex:cw.hex,dyeLot:cw.dyeLot,grams:cw.grams,alloc,avail,
           skeins:y.gps?(avail/y.gps).toFixed(1):'0',allocLabel:alloc>0?`${alloc} g réservés`:'',
           swatch:`width:26px;height:26px;border-radius:50%;flex:none;background-color:${cw.hex};box-shadow:inset 0 0 0 1.5px rgba(0,0,0,.12)`+(photoUrl?`;background-image:url(${photoUrl});background-size:cover;background-position:center`:''),
           editing:st.editingCw===cw.id,startEdit:this.startEditCw(y.id,cw.id),saveEdit:this.saveEditCw(y.id,cw.id),
-          setGrams:this.setCwGrams(y.id,cw.id),del:this.deleteCw(y.id,cw.id)}; });
+          adjustSign:adj.sign,adjustValue:adj.value,toggleSign:this.toggleGramsSign(cw.id),
+          setAdjustValue:this.setGramsAdjustValue(cw.id),onAdjustKey:this.onGramsAdjustKey(y.id,cw.id),
+          applyAdjust:this.applyGramsAdjust(y.id,cw.id),
+          del:this.deleteCw(y.id,cw.id)}; });
       const totalAvail=colorways.reduce((s,c)=>s+c.avail,0);
       const totalSkeins=y.gps?(colorways.reduce((s,c)=>s+c.avail,0)/y.gps).toFixed(1):'0';
       return {id:y.id,brand:y.brand,name:y.name,blend:y.blend,mps:y.mps,gps:y.gps,colorways,
@@ -1164,7 +1184,11 @@ class App extends Component {
                             <div style=${cw.swatch}></div>
                             <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
                             <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
-                            <div style="display:flex;align-items:center;gap:6px"><input class="input" type="number" value=${cw.grams} onInput=${cw.setGrams} style="width:86px;text-align:right"/><span style="font-size:12px" class="text-muted">g total</span></div>
+                            <div style="display:flex;align-items:center;gap:6px">
+                              <span style="font-family:var(--font-heading);font-size:15px">${cw.grams}</span><span style="font-size:12px" class="text-muted">g total</span>
+                              <button class="btn btn-icon btn-secondary" style="width:26px;height:26px;font-weight:700" onClick=${cw.toggleSign} title="Ajouter ou retirer des grammes">${cw.adjustSign}</button>
+                              <input class="input" type="number" min="0" placeholder="qté" value=${cw.adjustValue} onInput=${cw.setAdjustValue} onKeyDown=${cw.onAdjustKey} style="width:64px;text-align:right"/>
+                            </div>
                             <div style="text-align:right"><span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted"> g dispo</span></div>
                             <div style="display:flex;gap:2px;justify-content:flex-end">
                               <button class="btn btn-icon btn-ghost" onClick=${cw.startEdit} title="Modifier"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
