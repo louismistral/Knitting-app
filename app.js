@@ -1184,11 +1184,11 @@ class App extends Component {
                             <div style=${cw.swatch}></div>
                             <div><div style="font-weight:600;font-size:14px">${cw.color}</div><div style="font-size:11px" class="text-muted">Dye lot ${cw.dyeLot} · ${cw.allocLabel}</div></div>
                             <div class="text-muted mob-hide" style="font-size:12px">${cw.skeins} pelotes</div>
-                            <div class="cw-grams" style="display:flex;align-items:center;gap:8px">
+                            <div class="cw-grams" style="display:flex;align-items:center;gap:10px">
                               <span style="font-family:var(--font-heading);font-size:16px">${cw.avail}</span><span style="font-size:11px" class="text-muted">g dispo</span>
-                              <div style="position:relative">
-                                <button class="btn btn-icon btn-secondary" style="position:absolute;left:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;font-weight:700;border-radius:50%" onClick=${cw.toggleSign} title="Ajouter ou retirer des grammes">${cw.adjustSign}</button>
-                                <input class="input" type="number" min="0" placeholder="qté" value=${cw.adjustValue} onInput=${cw.setAdjustValue} onKeyDown=${cw.onAdjustKey} style="width:84px;padding-left:30px;text-align:right"/>
+                              <div style="position:relative;display:flex;align-items:center">
+                                <button class="btn btn-icon btn-secondary" style="position:absolute;left:2px;top:50%;transform:translateY(-50%);width:32px;height:32px;padding:0;font-weight:700" onClick=${cw.toggleSign} title="Ajouter ou retirer des grammes">${cw.adjustSign}</button>
+                                <input class="input" type="number" min="0" placeholder="qté" value=${cw.adjustValue} onInput=${cw.setAdjustValue} onKeyDown=${cw.onAdjustKey} style="width:92px;height:36px;padding-left:38px;text-align:right"/>
                               </div>
                               <button class="btn btn-icon btn-primary" style="width:32px;height:32px" onClick=${cw.applyAdjust} title="Valider la saisie"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
                             </div>
