@@ -33,7 +33,7 @@ class App extends Component {
       needleDialog:false, needleDraft:this.blankNeedle(), needleEditId:null,
       manageSizes:false, newSize:'',
       // ---- taxonomies + profil (stockés dans user_metadata) ----
-      categories:[], authors:[], needleSizes:[], brands:[], displayName:'',
+      categories:[], authors:[], needleSizes:[], brands:[], displayName:'', avatarPath:'',
       manageTax:false, newCategory:'', newAuthor:'',
       editingName:false, nameDraft:'',
       // ---- garde-fou navigation ----
@@ -239,9 +239,10 @@ class App extends Component {
       patternLinks:(pr.project_patterns||[]).map(pp=>({rowId:pp.id,patternId:pp.pattern_id})),
       photos:(pr.project_photos||[]).slice().sort((a,b)=>(a.position-b.position)||(new Date(a.created_at)-new Date(b.created_at)))
         .map(ph=>({rowId:ph.id,path:ph.path,name:ph.name,type:ph.type,position:ph.position||0}))}));
-    this.setState({stash,patterns,projects,needles,loaded:true, ...this.deriveMeta(patterns,stash)});
+    const meta=this.deriveMeta(patterns,stash);
+    this.setState({stash,patterns,projects,needles,loaded:true, ...meta});
     this._loadingData=false;
-    this.refreshSignedUrls({stash,patterns,projects});
+    this.refreshSignedUrls({stash,patterns,projects,avatarPath:meta.avatarPath});
   }
   deriveMeta(patterns,stash){
     const u=this.state.session&&this.state.session.user;
@@ -254,12 +255,12 @@ class App extends Component {
     const authors=Array.isArray(meta.authors)?meta.authors.slice():usedAuthors;
     const brands=Array.isArray(meta.brands)?meta.brands.slice():usedBrands;
     const needleSizes=Array.isArray(meta.needle_sizes)&&meta.needle_sizes.length?meta.needle_sizes.slice():this.standardSizes();
-    return {categories,authors,brands,needleSizes,displayName:meta.display_name||''};
+    return {categories,authors,brands,needleSizes,displayName:meta.display_name||'',avatarPath:meta.avatar_path||''};
   }
   async saveMeta(patch){
     // `patch` utilise les clés snake_case de user_metadata (côté Supabase) ;
     // l'état local est en camelCase, d'où la table de correspondance.
-    const keyMap={display_name:'displayName',needle_sizes:'needleSizes'};
+    const keyMap={display_name:'displayName',needle_sizes:'needleSizes',avatar_path:'avatarPath'};
     const statePatch={}; Object.keys(patch).forEach(k=>{ statePatch[keyMap[k]||k]=patch[k]; });
     this.setState(statePatch);
     try{ await supabase.auth.updateUser({data:patch}); }catch(e){}
@@ -268,11 +269,13 @@ class App extends Component {
   // n'étant pas encore appliqué juste après loadAll) ; sinon on lit l'état courant.
   async refreshSignedUrls(src){
     const st=src||this.state;
+    const avatarPath=('avatarPath' in st)?st.avatarPath:this.state.avatarPath;
     const patternPaths=[...new Set(st.patterns.filter(p=>p.kind==='img'&&p.path).map(p=>p.path))];
     const photoPaths=[...new Set([
       ...st.projects.flatMap(p=>p.photos.map(ph=>ph.path)),
       ...(this.state.projectDraft? this.state.projectDraft.photos.map(ph=>ph.path):[]),
       ...st.stash.flatMap(y=>y.colorways.map(c=>c.photo).filter(Boolean)),
+      ...(avatarPath?[avatarPath]:[]),
     ])];
     const updates={};
     if(patternPaths.length){ const {data}=await supabase.storage.from('patterns').createSignedUrls(patternPaths,3600); (data||[]).forEach(d=>{ if(d.signedUrl) updates[d.path]=d.signedUrl; }); }
@@ -503,6 +506,19 @@ class App extends Component {
   cancelEditName=()=>this.setState({editingName:false});
   setNameDraft=(e)=>this.setState({nameDraft:e.target.value});
   saveName=async()=>{ const n=this.state.nameDraft.trim(); await this.saveMeta({display_name:n}); this.setState({editingName:false}); };
+  // ---- profil : photo (bucket `photos`, réutilisé) ----
+  onAvatarPhoto=async(e)=>{ const file=e.target.files[0]; e.target.value=''; if(!file||!file.type.startsWith('image')) return;
+    const prevPath=this.state.avatarPath;
+    const path=this.storagePath(file);
+    const {error}=await supabase.storage.from('photos').upload(path,file,{contentType:file.type||undefined});
+    if(error) return;
+    const url=await this.getSignedUrl('photos',path);
+    await this.saveMeta({avatar_path:path});
+    if(prevPath) supabase.storage.from('photos').remove([prevPath]);
+    this.setState(s=>({signedUrls:{...s.signedUrls,[path]:url}})); };
+  removeAvatarPhoto=async()=>{ const prevPath=this.state.avatarPath; if(!prevPath) return;
+    await this.saveMeta({avatar_path:''});
+    supabase.storage.from('photos').remove([prevPath]); };
 
   // ---- needle stash ----
   openNeedleAdd=()=>this.setState({needleDialog:true,needleDraft:this.blankNeedle(),needleEditId:null});
@@ -954,6 +970,7 @@ class App extends Component {
       modalOpen:st.patternDialog,closeModals:this.closeModals,
       editingName:st.editingName,nameDraft:st.nameDraft,startEditName:this.startEditName,cancelEditName:this.cancelEditName,setNameDraft:this.setNameDraft,saveName:this.saveName,
       userName,userEmail:email,avatarLetter:userName.charAt(0).toUpperCase()||'?',memberSince,signOut:this.signOut,
+      avatarUrl:st.avatarPath?st.signedUrls[st.avatarPath]:'',onAvatarPhoto:this.onAvatarPhoto,removeAvatarPhoto:this.removeAvatarPhoto,
     };
   }
   projHex(p,map){ const a=p.allocations[0]; const e=a&&map[a.colorwayId]; return e?e.cw.hex:'#c9a06a'; }
@@ -1033,7 +1050,14 @@ class App extends Component {
         <section style=${v.homeShow}>
           <!-- Bande profil -->
           <div class="profile-band" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-radius:26px;background:var(--color-surface);padding:20px 26px;box-shadow:var(--shadow-sm);margin-bottom:24px">
-            <div style="width:64px;height:64px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600));display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:26px;color:var(--color-bg)">${v.avatarLetter}</div>
+            <div style="position:relative;flex:none;width:64px;height:64px">
+              <div style=${'width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:26px;color:var(--color-bg);'+(v.avatarUrl?`background-image:url(${v.avatarUrl});background-size:cover;background-position:center`:'background:radial-gradient(circle at 35% 30%,var(--color-accent-300),var(--color-accent-600))')}>${!v.avatarUrl?v.avatarLetter:''}</div>
+              <label class="btn btn-icon btn-primary" style="position:absolute;bottom:-2px;right:-2px;width:26px;height:26px;padding:0;cursor:pointer" title="Changer la photo de profil">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                <input type="file" accept="image/*" onChange=${v.onAvatarPhoto} style="display:none"/>
+              </label>
+              ${v.avatarUrl && html`<button class="btn btn-icon btn-ghost" style="position:absolute;top:-2px;right:-2px;width:20px;height:20px;padding:0;background:var(--color-surface);box-shadow:var(--shadow-sm)" onClick=${v.removeAvatarPhoto} title="Retirer la photo"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`}
+            </div>
             <div style="flex:1;min-width:200px">
               ${!v.editingName && html`
                 <div style="display:flex;align-items:center;gap:6px">
@@ -1041,9 +1065,12 @@ class App extends Component {
                   <button class="btn btn-icon btn-ghost" style="width:24px;height:24px" onClick=${v.startEditName} title="Modifier le nom"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
                 </div>`}
               ${v.editingName && html`
-                <div style="display:flex;gap:8px;align-items:center;max-width:320px">
-                  <input class="input" value=${v.nameDraft} onInput=${v.setNameDraft} placeholder="Ton prénom" onKeyDown=${(e)=>{if(e.key==='Enter')v.saveName();}}/>
-                  <button class="btn btn-secondary" onClick=${v.cancelEditName}>Annuler</button><button class="btn btn-primary" onClick=${v.saveName}>Enregistrer</button>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%;max-width:420px">
+                  <input class="input" value=${v.nameDraft} onInput=${v.setNameDraft} placeholder="Ton prénom" autofocus style="flex:1 1 220px;min-width:0;font-size:18px;height:48px;font-family:var(--font-heading)" onKeyDown=${(e)=>{if(e.key==='Enter')v.saveName();}}/>
+                  <div style="display:flex;gap:8px;flex:none;margin-left:auto">
+                    <button class="btn btn-icon btn-secondary" style="width:40px;height:40px;flex:none" onClick=${v.cancelEditName} title="Annuler"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                    <button class="btn btn-icon btn-primary" style="width:40px;height:40px;flex:none" onClick=${v.saveName} title="Enregistrer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+                  </div>
                 </div>`}
               <div style="font-size:12px;margin-top:2px" class="text-muted">${v.userEmail} · ${v.memberSince}</div>
             </div>
